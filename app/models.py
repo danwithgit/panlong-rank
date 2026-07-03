@@ -52,6 +52,7 @@ class IndexQuote(BaseModel):
     amount: float
     updated_at: datetime
     trading_status: TradingStatus
+    data_source: str = "unknown"
 
 
 class StockQuote(BaseModel):
@@ -84,6 +85,7 @@ class MarketSnapshot(BaseModel):
     boards: list[BoardQuote]
     stocks: list[StockQuote]
     trading_status: TradingStatus
+    data_source: str = "unknown"
 
 
 class RankingItem(BaseModel):
@@ -115,6 +117,8 @@ class DashboardResponse(BaseModel):
     timeframe_label: str
     index: IndexQuote
     trading_status: TradingStatus
+    data_source: str = "unknown"
+    is_sample_data: bool = False
     board_rankings: list[RankingBlock]
     leader_rankings: list[RankingBlock]
 
@@ -122,5 +126,7 @@ class DashboardResponse(BaseModel):
 class BoardDetailResponse(BaseModel):
     timeframe: Timeframe
     timeframe_label: str
+    data_source: str = "unknown"
+    is_sample_data: bool = False
     board: BoardQuote
     stock_rankings: list[RankingBlock]

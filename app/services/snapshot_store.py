@@ -33,6 +33,7 @@ def save_trading_calendar(db: Session, status: TradingStatus) -> None:
 
 
 def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> int:
+    source = snapshot.data_source if snapshot.data_source != "unknown" else data_source
     trade_date = snapshot.trading_status.last_trade_date if not snapshot.trading_status.is_trade_day else snapshot.trading_status.trade_date
     save_trading_calendar(db, snapshot.trading_status)
     leader_map = _leader_map(db, snapshot)
@@ -49,7 +50,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
             turnover=snapshot.index.amount,
             snapshot_time=snapshot.index.updated_at.replace(tzinfo=None),
             trade_date=trade_date,
-            data_source=data_source,
+            data_source=source,
         )
     )
     rows += 1
@@ -68,7 +69,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
                 leader_stock_name=leader[1] if leader else board.leader_stock_name,
                 snapshot_time=board.updated_at.replace(tzinfo=None),
                 trade_date=trade_date,
-                data_source=data_source,
+                data_source=source,
             )
         )
         rows += 1
@@ -95,7 +96,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
                 previous_close=0,
                 snapshot_time=stock.updated_at.replace(tzinfo=None),
                 trade_date=trade_date,
-                data_source=data_source,
+                data_source=source,
             )
         )
         rows += 1
@@ -372,6 +373,7 @@ def _snapshot_from_rows(
         amount=index_row.turnover,
         updated_at=index_row.snapshot_time,
         trading_status=status,
+        data_source=index_row.data_source,
     )
     boards = [
         BoardQuote(
@@ -402,7 +404,7 @@ def _snapshot_from_rows(
         )
         for stock, mapping in stock_rows
     ]
-    return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=status)
+    return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=status, data_source=index_row.data_source)
 
 
 def _dedupe_by(rows, attr: str):

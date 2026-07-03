@@ -56,6 +56,7 @@ def index_page():
 
 @app.get("/api/health")
 def health(settings: Settings = Depends(get_settings), db: Session = Depends(get_db)):
+    latest = latest_snapshot(db, get_trading_status(settings))
     return {
         "status": "ok",
         "app": settings.app_name,
@@ -64,6 +65,7 @@ def health(settings: Settings = Depends(get_settings), db: Session = Depends(get
         "has_snapshots": has_snapshots(db),
         "scheduler_enabled": settings.scheduler_enabled,
         "cache": "redis" if settings.redis_url else "memory",
+        "latest_data_source": latest.data_source if latest else None,
     }
 
 
@@ -123,6 +125,8 @@ def shanghai_index(settings: Settings = Depends(get_settings), db: Session = Dep
         "updated_at": snapshot.index.updated_at,
         "is_trading_day": snapshot.trading_status.is_trade_day,
         "is_realtime_data": snapshot.trading_status.is_trade_day,
+        "data_source": snapshot.data_source,
+        "is_sample_data": _is_sample_source(snapshot.data_source),
         "display_trade_date": snapshot.trading_status.trade_date if snapshot.trading_status.is_trade_day else snapshot.trading_status.last_trade_date,
         "trading_status": snapshot.trading_status,
     }
@@ -159,6 +163,8 @@ def dashboard(
         timeframe_label=_timeframe_label(timeframe),
         index=snapshot.index,
         trading_status=snapshot.trading_status,
+        data_source=snapshot.data_source,
+        is_sample_data=_is_sample_source(snapshot.data_source),
         board_rankings=board_rankings,
         leader_rankings=leader_rankings,
     )
@@ -230,12 +236,14 @@ def board_detail(
     db: Session = Depends(get_db),
 ):
     status = get_trading_status(settings)
-    board, stock_rankings = build_board_detail_from_db(db, status, settings, timeframe, limit, board_code)
+    board, stock_rankings, snapshot = build_board_detail_from_db(db, status, settings, timeframe, limit, board_code)
     if board is None:
         raise HTTPException(status_code=404, detail="Board not found")
     return BoardDetailResponse(
         timeframe=timeframe,
         timeframe_label=_timeframe_label(timeframe),
+        data_source=snapshot.data_source,
+        is_sample_data=_is_sample_source(snapshot.data_source),
         board=board,
         stock_rankings=stock_rankings,
     )
@@ -284,6 +292,8 @@ def _rank_response(
         "type": rank_type,
         "target_type": target_type,
         "updated_at": snapshot.index.updated_at if snapshot else None,
+        "data_source": snapshot.data_source if snapshot else None,
+        "is_sample_data": _is_sample_source(snapshot.data_source) if snapshot else None,
         "items": block.items,
     }
     encoded = {
@@ -306,6 +316,10 @@ def _safe_database_url(database_url: str) -> str:
     prefix, suffix = database_url.rsplit("@", 1)
     scheme = prefix.split(":", 1)[0]
     return f"{scheme}:***@{suffix}"
+
+
+def _is_sample_source(data_source: str) -> bool:
+    return data_source.startswith("sample") or "sample" in data_source
 
 
 def _parse_period(period: str) -> Timeframe:

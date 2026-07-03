@@ -67,11 +67,11 @@ def build_board_detail_from_db(db: Session, status, settings, timeframe: Timefra
         raise RuntimeError("no snapshot available")
     board = next((item for item in snapshot.boards if item.code == board_code), None)
     if board is None:
-        return None, []
+        return None, [], snapshot
     rankings = build_stock_rankings_from_snapshot(snapshot, timeframe, limit, board_code=board_code)
     save_ranking_blocks(db, status, timeframe, rankings)
     db.commit()
-    return board, rankings
+    return board, rankings, snapshot
 
 
 def rank_query(

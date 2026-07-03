@@ -70,7 +70,9 @@ function renderStatus(status) {
 
 function renderMeta(data) {
   const updatedAt = data.index?.updated_at ? new Date(data.index.updated_at).toLocaleString("zh-CN", { hour12: false }) : "-";
-  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt}`;
+  const source = data.index?.data_source || data.data_source || "unknown";
+  const sample = source.includes("sample") ? " / 部分样例数据" : "";
+  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source}${sample}`;
 }
 
 function renderRankingCards(selector, rankings, kind) {

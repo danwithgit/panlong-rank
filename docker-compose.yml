@@ -23,7 +23,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://panlong:panlong@postgres:5432/panlong_rank
       REDIS_URL: redis://redis:6379/0
-      DATA_PROVIDER: sample
+      DATA_PROVIDER: auto
       SCHEDULER_ENABLED: "true"
       COLLECT_ON_STARTUP: "true"
     ports:

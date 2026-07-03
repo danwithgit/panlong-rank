@@ -97,8 +97,10 @@ def build_sample_snapshot(trading_status: TradingStatus) -> MarketSnapshot:
             amount=412_600_000_000,
             updated_at=now,
             trading_status=trading_status,
+            data_source="sample",
         ),
         boards=boards,
         stocks=stocks,
         trading_status=trading_status,
+        data_source="sample",
     )
