@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panlong Rank</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Panlong Rank</h1>
+        <p>上证指数、板块与龙头股排行榜</p>
+      </div>
+      <div class="status" id="tradeStatus">加载中</div>
+    </header>
+
+    <main>
+      <section class="index-panel" id="indexPanel"></section>
+
+      <nav class="tabs" id="timeframeTabs" aria-label="时间维度"></nav>
+
+      <section class="layout">
+        <div>
+          <div class="section-head">
+            <h2>板块排行榜</h2>
+            <select id="boardRankingSelect" aria-label="板块排行榜类型"></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>涨跌幅</th>
+                  <th>成交量</th>
+                  <th>成交额</th>
+                  <th>资金量</th>
+                  <th>龙头股</th>
+                </tr>
+              </thead>
+              <tbody id="boardRankingBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-head">
+            <h2>龙头股排行榜</h2>
+            <select id="leaderRankingSelect" aria-label="龙头股排行榜类型"></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>股票</th>
+                  <th>价格</th>
+                  <th>涨跌幅</th>
+                  <th>成交额</th>
+                  <th>资金量</th>
+                </tr>
+              </thead>
+              <tbody id="leaderRankingBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail">
+        <div class="section-head">
+          <h2 id="detailTitle">板块详情</h2>
+          <select id="stockRankingSelect" aria-label="个股排行榜类型"></select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>股票</th>
+                <th>价格</th>
+                <th>涨跌幅</th>
+                <th>成交量</th>
+                <th>成交额</th>
+                <th>资金量</th>
+                <th>龙头</th>
+              </tr>
+            </thead>
+            <tbody id="stockRankingBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

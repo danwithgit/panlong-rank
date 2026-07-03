@@ -1,0 +1,1 @@
+"""Panlong Rank application package."""
