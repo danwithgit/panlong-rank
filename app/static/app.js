@@ -71,8 +71,7 @@ function renderStatus(status) {
 function renderMeta(data) {
   const updatedAt = data.index?.updated_at ? new Date(data.index.updated_at).toLocaleString("zh-CN", { hour12: false }) : "-";
   const source = data.index?.data_source || data.data_source || "unknown";
-  const sample = source.includes("sample") ? " / 部分样例数据" : "";
-  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source}${sample}`;
+  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source}`;
 }
 
 function renderRankingCards(selector, rankings, kind) {
@@ -180,5 +179,5 @@ async function loadBoardDetail(boardCode) {
 }
 
 loadDashboard().catch((error) => {
-  document.querySelector("#tradeStatus").textContent = error.message;
+  document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
 });

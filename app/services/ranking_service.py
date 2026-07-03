@@ -37,15 +37,7 @@ def ensure_snapshot(db: Session, settings, status) -> MarketSnapshot:
     snapshot = latest_snapshot(db, status)
     if snapshot is not None:
         return snapshot
-    from app.services.collector import collect_market_snapshot
-
-    try:
-        return collect_market_snapshot(db, settings, force=True)
-    except Exception:
-        snapshot = latest_snapshot(db, status)
-        if snapshot is None:
-            raise
-        return snapshot
+    raise RuntimeError("行情数据缺失，采集服务繁忙或上游数据源不可用")
 
 
 def build_dashboard_from_db(db: Session, status, settings, timeframe: Timeframe, limit: int):

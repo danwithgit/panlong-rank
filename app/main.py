@@ -70,8 +70,12 @@ def health(settings: Settings = Depends(get_settings), db: Session = Depends(get
 
 
 @app.post("/api/admin/collect")
-def collect_now(settings: Settings = Depends(get_settings), db: Session = Depends(get_db)):
-    snapshot = collect_market_snapshot(db, settings, force=True)
+def collect_now(
+    force: bool = Query(default=False),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    snapshot = collect_market_snapshot(db, settings, force=force)
     return {
         "status": "ok",
         "trade_date": snapshot.trading_status.trade_date,
@@ -110,10 +114,7 @@ def shanghai_index(settings: Settings = Depends(get_settings), db: Session = Dep
     status = get_trading_status(settings)
     snapshot = latest_snapshot(db, status)
     if snapshot is None:
-        try:
-            snapshot = collect_market_snapshot(db, settings, force=True)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"no index snapshot available: {exc}") from exc
+        raise HTTPException(status_code=503, detail="行情数据缺失，采集服务繁忙或上游数据源不可用")
     return {
         "index_code": snapshot.index.code,
         "index_name": snapshot.index.name,
@@ -137,7 +138,7 @@ def index_quote(settings: Settings = Depends(get_settings), db: Session = Depend
     status = get_trading_status(settings)
     snapshot = latest_snapshot(db, status)
     if snapshot is None:
-        snapshot = collect_market_snapshot(db, settings, force=True)
+        raise HTTPException(status_code=503, detail="行情数据缺失，采集服务繁忙或上游数据源不可用")
     return snapshot.index
 
 

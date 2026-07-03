@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -14,6 +15,9 @@ from app.services.snapshot_store import save_snapshot, trim_old_snapshots
 
 def collect_market_snapshot(db: Session, settings: Settings, force: bool = False) -> MarketSnapshot:
     started_at = datetime.utcnow()
+    if _is_rate_limited(db, settings, started_at, force):
+        raise RuntimeError(f"collection rate limited, retry after {settings.min_collect_interval_seconds} seconds")
+
     job = JobLog(job_name="collect_market_snapshot", status="running", started_at=started_at, rows_count=0)
     db.add(job)
     db.flush()
@@ -47,3 +51,18 @@ def collect_market_snapshot(db: Session, settings: Settings, force: bool = False
         db.add(failed)
         db.commit()
         raise
+
+
+def _is_rate_limited(db: Session, settings: Settings, now: datetime, force: bool) -> bool:
+    if force:
+        return False
+    latest = db.scalar(
+        select(JobLog)
+        .where(JobLog.job_name == "collect_market_snapshot")
+        .order_by(JobLog.started_at.desc(), JobLog.id.desc())
+        .limit(1)
+    )
+    if latest is None:
+        return False
+    elapsed = (now - latest.started_at).total_seconds()
+    return elapsed < settings.min_collect_interval_seconds

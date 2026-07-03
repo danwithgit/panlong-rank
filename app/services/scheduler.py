@@ -42,7 +42,7 @@ def _scheduled_collect(settings: Settings) -> None:
         return
     db = SessionLocal()
     try:
-        collect_market_snapshot(db, settings)
+        collect_market_snapshot(db, settings, force=False)
     except Exception:
         pass
     finally:

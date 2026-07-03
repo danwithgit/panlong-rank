@@ -6,7 +6,6 @@ import time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import requests
 
 from app.config import Settings
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
@@ -36,8 +35,8 @@ class AkshareMarketDataProvider(MarketDataProvider):
                 last_error = exc
                 logger.warning("AKShare snapshot attempt %s failed: %s", attempt, exc)
                 time.sleep(0.5 * attempt)
-        logger.error("AKShare unavailable, using sample data: %s", last_error)
-        return _eastmoney_index_sample_rankings(trading_status)
+        logger.error("AKShare unavailable after retries: %s", last_error)
+        raise RuntimeError(f"AKShare unavailable after retries: {last_error}") from last_error
 
     def _snapshot_once(self, trading_status: TradingStatus) -> MarketSnapshot:
         try:
@@ -128,46 +127,7 @@ def get_provider(settings: Settings) -> MarketDataProvider:
         return SampleMarketDataProvider()
     if provider in {"auto", "akshare"}:
         return AkshareMarketDataProvider()
-    return SampleMarketDataProvider()
-
-
-def _eastmoney_index_sample_rankings(trading_status: TradingStatus) -> MarketSnapshot:
-    snapshot = build_sample_snapshot(trading_status)
-    try:
-        response = requests.get(
-            "https://push2.eastmoney.com/api/qt/stock/get",
-            params={
-                "secid": "1.000001",
-                "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170",
-            },
-            timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()["data"]
-        index = snapshot.index.model_copy(
-            update={
-                "name": data.get("f58") or "上证指数",
-                "code": data.get("f57") or "000001",
-                "current": _scaled(data.get("f43")),
-                "change": _scaled(data.get("f169")),
-                "change_percent": _scaled(data.get("f170")),
-                "volume": float(data.get("f47") or 0),
-                "amount": float(data.get("f48") or 0),
-                "updated_at": datetime.now(CN_TZ),
-                "data_source": "eastmoney",
-            }
-        )
-        return snapshot.model_copy(update={"index": index, "data_source": "eastmoney_index_sample_rankings"})
-    except Exception as exc:
-        logger.error("Eastmoney index fallback failed, using pure sample data: %s", exc)
-        return snapshot.model_copy(update={"data_source": "sample_fallback"})
-
-
-def _scaled(value) -> float:
-    try:
-        return round(float(value) / 100, 4)
-    except (TypeError, ValueError):
-        return 0.0
+    raise ValueError(f"Unsupported DATA_PROVIDER: {settings.data_provider}")
 
 
 def _find_row(df: pd.DataFrame, columns: list[str], expected: str):

@@ -14,8 +14,9 @@ class Settings(BaseSettings):
     cache_ttl_seconds: int = 30
     scheduler_enabled: bool = True
     collect_on_startup: bool = True
-    collect_interval_seconds: int = 60
-    use_sample_when_provider_fails: bool = True
+    collect_interval_seconds: int = 120
+    min_collect_interval_seconds: int = 60
+    use_sample_when_provider_fails: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
