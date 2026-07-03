@@ -4,6 +4,8 @@ pydantic-settings==2.7.0
 pandas==2.2.3
 APScheduler==3.10.4
 pytest==8.3.4
+SQLAlchemy==2.0.36
+redis==5.2.1
 
 # Optional runtime data providers. The app works without them in sample mode.
 akshare==1.18.64

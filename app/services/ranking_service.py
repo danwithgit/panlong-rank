@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Callable, Optional
+
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from app.db.tables import Ranking
+from app.models import BoardQuote, MarketSnapshot, RankingBlock, RankingItem, StockQuote, Timeframe
+from app.services.periods import combine_trade_time, period_for
+from app.services.rankings import timeframe_label
+from app.services.snapshot_store import latest_snapshot, snapshot_for_period
+
+RANK_TYPE_LABELS = {
+    "turnover": "成交额",
+    "volume": "成交量",
+    "fund": "资金量",
+    "change": "涨幅",
+}
+
+TARGET_TYPE_LABELS = {
+    "sector": "板块",
+    "stock": "个股",
+    "leader_stock": "龙头股",
+}
+
+
+def snapshot_for_timeframe(db: Session, status, timeframe: Timeframe) -> Optional[MarketSnapshot]:
+    spec = period_for(timeframe)
+    start = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.start)
+    end = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.end)
+    return snapshot_for_period(db, status, start, end)
+
+
+def ensure_snapshot(db: Session, settings, status) -> MarketSnapshot:
+    snapshot = latest_snapshot(db, status)
+    if snapshot is not None:
+        return snapshot
+    from app.services.collector import collect_market_snapshot
+
+    try:
+        return collect_market_snapshot(db, settings, force=True)
+    except Exception:
+        snapshot = latest_snapshot(db, status)
+        if snapshot is None:
+            raise
+        return snapshot
+
+
+def build_dashboard_from_db(db: Session, status, settings, timeframe: Timeframe, limit: int):
+    ensure_snapshot(db, settings, status)
+    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    if snapshot is None:
+        raise RuntimeError("no snapshot available")
+    board_rankings = build_board_rankings_from_snapshot(snapshot, timeframe, limit)
+    leader_rankings = build_leader_rankings_from_snapshot(snapshot, timeframe, limit)
+    save_ranking_blocks(db, status, timeframe, board_rankings + leader_rankings)
+    db.commit()
+    return snapshot, board_rankings, leader_rankings
+
+
+def build_board_detail_from_db(db: Session, status, settings, timeframe: Timeframe, limit: int, board_code: str):
+    ensure_snapshot(db, settings, status)
+    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    if snapshot is None:
+        raise RuntimeError("no snapshot available")
+    board = next((item for item in snapshot.boards if item.code == board_code), None)
+    if board is None:
+        return None, []
+    rankings = build_stock_rankings_from_snapshot(snapshot, timeframe, limit, board_code=board_code)
+    save_ranking_blocks(db, status, timeframe, rankings)
+    db.commit()
+    return board, rankings
+
+
+def rank_query(
+    db: Session,
+    status,
+    settings,
+    timeframe: Timeframe,
+    rank_type: str,
+    target_type: str,
+    limit: int,
+    sector_code: Optional[str] = None,
+) -> RankingBlock:
+    ensure_snapshot(db, settings, status)
+    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    if snapshot is None:
+        raise RuntimeError("no snapshot available")
+    block = build_single_rank(snapshot, timeframe, rank_type, target_type, limit, sector_code=sector_code)
+    save_ranking_blocks(db, status, timeframe, [block])
+    db.commit()
+    return block
+
+
+def build_board_rankings_from_snapshot(snapshot: MarketSnapshot, timeframe: Timeframe, limit: int) -> list[RankingBlock]:
+    return [
+        build_single_rank(snapshot, timeframe, rank_type, "sector", limit)
+        for rank_type in ["turnover", "volume", "fund", "change"]
+    ]
+
+
+def build_stock_rankings_from_snapshot(
+    snapshot: MarketSnapshot,
+    timeframe: Timeframe,
+    limit: int,
+    board_code: Optional[str] = None,
+) -> list[RankingBlock]:
+    return [
+        build_single_rank(snapshot, timeframe, rank_type, "stock", limit, sector_code=board_code)
+        for rank_type in ["turnover", "volume", "fund", "change"]
+    ]
+
+
+def build_leader_rankings_from_snapshot(snapshot: MarketSnapshot, timeframe: Timeframe, limit: int) -> list[RankingBlock]:
+    return [
+        build_single_rank(snapshot, timeframe, rank_type, "leader_stock", limit)
+        for rank_type in ["turnover", "volume", "fund", "change"]
+    ]
+
+
+def build_single_rank(
+    snapshot: MarketSnapshot,
+    timeframe: Timeframe,
+    rank_type: str,
+    target_type: str,
+    limit: int,
+    sector_code: Optional[str] = None,
+) -> RankingBlock:
+    if rank_type not in RANK_TYPE_LABELS:
+        raise ValueError(f"unsupported rank_type: {rank_type}")
+    if target_type not in TARGET_TYPE_LABELS:
+        raise ValueError(f"unsupported target_type: {target_type}")
+    metric = _metric_for_rank_type(rank_type)
+    title = f"{timeframe_label(timeframe)}{TARGET_TYPE_LABELS[target_type]}{RANK_TYPE_LABELS[rank_type]}排行榜"
+
+    if target_type == "sector":
+        items = _rank_boards(snapshot.boards, rank_type, limit)
+    elif target_type == "stock":
+        stocks = snapshot.stocks
+        if sector_code:
+            stocks = [item for item in stocks if item.board_code == sector_code]
+        leaders = {board.leader_stock_code for board in snapshot.boards if board.leader_stock_code}
+        items = _rank_stocks(stocks, rank_type, limit, leaders)
+    else:
+        leaders_by_board = {board.code: board.leader_stock_code for board in snapshot.boards if board.leader_stock_code}
+        leader_stocks = [stock for stock in snapshot.stocks if leaders_by_board.get(stock.board_code) == stock.code]
+        items = _rank_stocks(leader_stocks, rank_type, limit, set(leaders_by_board.values()))
+
+    return RankingBlock(
+        key=f"{target_type}_{rank_type}",
+        title=title,
+        metric=metric,
+        items=items,
+    )
+
+
+def save_ranking_blocks(db: Session, status, timeframe: Timeframe, blocks: list[RankingBlock]) -> None:
+    spec = period_for(timeframe)
+    trade_date = status.trade_date if status.is_trade_day else status.last_trade_date
+    for block in blocks:
+        target_type, rank_type = _parse_block_key(block.key)
+        db.execute(
+            delete(Ranking).where(
+                Ranking.trade_date == trade_date,
+                Ranking.period_type == spec.period_type,
+                Ranking.rank_type == rank_type,
+                Ranking.target_type == target_type,
+            )
+        )
+        for item in block.items:
+            db.add(
+                Ranking(
+                    trade_date=trade_date,
+                    period_type=spec.period_type,
+                    period_start=spec.start.strftime("%H:%M") if spec.start else None,
+                    period_end=spec.end.strftime("%H:%M") if spec.end else None,
+                    rank_type=rank_type,
+                    target_type=target_type,
+                    sector_code=item.board_code,
+                    sector_name=item.board_name,
+                    stock_code=item.stock_code,
+                    stock_name=item.stock_name,
+                    rank_no=item.rank,
+                    price=item.current_price or 0,
+                    change_percent=item.change_percent,
+                    volume=item.volume,
+                    turnover=item.amount,
+                    fund_amount=item.capital_flow,
+                    snapshot_time=item.updated_at.replace(tzinfo=None),
+                    created_at=datetime.utcnow(),
+                )
+            )
+
+
+def cached_ranking_rows(
+    db: Session,
+    status,
+    timeframe: Timeframe,
+    rank_type: str,
+    target_type: str,
+    limit: int,
+) -> list[Ranking]:
+    spec = period_for(timeframe)
+    trade_date = status.trade_date if status.is_trade_day else status.last_trade_date
+    return list(
+        db.scalars(
+            select(Ranking)
+            .where(
+                Ranking.trade_date == trade_date,
+                Ranking.period_type == spec.period_type,
+                Ranking.rank_type == rank_type,
+                Ranking.target_type == target_type,
+            )
+            .order_by(Ranking.rank_no)
+            .limit(limit)
+        )
+    )
+
+
+def _rank_boards(boards: list[BoardQuote], rank_type: str, limit: int) -> list[RankingItem]:
+    scorer = _board_scorer(rank_type)
+    ranked = sorted(boards, key=scorer, reverse=True)[:limit]
+    return [
+        RankingItem(
+            rank=index,
+            board_name=item.name,
+            board_code=item.code,
+            change_percent=item.change_percent,
+            volume=item.volume,
+            amount=item.amount,
+            capital_flow=item.capital_flow,
+            leader_stock_name=item.leader_stock_name,
+            leader_stock_code=item.leader_stock_code,
+            updated_at=item.updated_at,
+        )
+        for index, item in enumerate(ranked, start=1)
+    ]
+
+
+def _rank_stocks(stocks: list[StockQuote], rank_type: str, limit: int, leaders: set) -> list[RankingItem]:
+    scorer = _stock_scorer(rank_type)
+    ranked = sorted(stocks, key=scorer, reverse=True)[:limit]
+    return [
+        RankingItem(
+            rank=index,
+            board_name=item.board_name,
+            board_code=item.board_code,
+            stock_name=item.name,
+            stock_code=item.code,
+            current_price=item.price,
+            change_percent=item.change_percent,
+            volume=item.volume,
+            amount=item.amount,
+            capital_flow=item.capital_flow,
+            is_leader=item.code in leaders,
+            updated_at=item.updated_at,
+        )
+        for index, item in enumerate(ranked, start=1)
+    ]
+
+
+def _metric_for_rank_type(rank_type: str) -> str:
+    return {"turnover": "amount", "volume": "volume", "fund": "capital_flow", "change": "change_percent"}[rank_type]
+
+
+def _board_scorer(rank_type: str) -> Callable[[BoardQuote], float]:
+    return {
+        "turnover": lambda item: item.amount,
+        "volume": lambda item: item.volume,
+        "fund": lambda item: item.capital_flow,
+        "change": lambda item: item.change_percent,
+    }[rank_type]
+
+
+def _stock_scorer(rank_type: str) -> Callable[[StockQuote], float]:
+    return {
+        "turnover": lambda item: item.amount,
+        "volume": lambda item: item.volume,
+        "fund": lambda item: item.capital_flow,
+        "change": lambda item: item.change_percent,
+    }[rank_type]
+
+
+def _parse_block_key(key: str) -> tuple[str, str]:
+    if key.startswith("leader_stock_"):
+        return "leader_stock", key.replace("leader_stock_", "", 1)
+    parts = key.split("_")
+    return parts[0], "_".join(parts[1:])
