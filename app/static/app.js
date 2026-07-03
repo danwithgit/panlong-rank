@@ -18,9 +18,14 @@ let state = {
   stockRankings: [],
   selectedBoardCode: null,
   chart: null,
+  refreshTimer: null,
+  loading: false,
+  lastTradingStatus: null,
 };
 
 const moneyFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
+const ACTIVE_REFRESH_MS = 60 * 1000;
+const BREAK_REFRESH_MS = 5 * 60 * 1000;
 
 function formatLarge(value) {
   if (value === null || value === undefined) return "-";
@@ -44,7 +49,7 @@ function renderTabs() {
   container.querySelectorAll("button").forEach((button) => {
     button.addEventListener("click", () => {
       state.timeframe = button.dataset.timeframe;
-      loadDashboard();
+      refreshDashboard({ force: true });
     });
   });
 }
@@ -71,7 +76,8 @@ function renderStatus(status) {
 function renderMeta(data) {
   const updatedAt = data.index?.updated_at ? new Date(data.index.updated_at).toLocaleString("zh-CN", { hour12: false }) : "-";
   const source = data.index?.data_source || data.data_source || "unknown";
-  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source}`;
+  const nextRefresh = refreshLabel(data.trading_status);
+  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source} / ${nextRefresh}`;
 }
 
 function renderRankingCards(selector, rankings, kind) {
@@ -150,6 +156,45 @@ function renderTurnoverChart() {
   });
 }
 
+function refreshLabel(status) {
+  if (!status?.is_trade_day) return "非交易日，回到页面时刷新";
+  if (["morning_trading", "afternoon_trading", "closing_trading"].includes(status.session)) return "交易中自动刷新";
+  if (status.session === "lunch_break") return "午休低频刷新";
+  return "已收盘，回到页面时刷新";
+}
+
+function refreshDelay(status) {
+  if (!status?.is_trade_day) return null;
+  if (["morning_trading", "afternoon_trading", "closing_trading"].includes(status.session)) return ACTIVE_REFRESH_MS;
+  if (status.session === "lunch_break") return BREAK_REFRESH_MS;
+  return null;
+}
+
+function scheduleNextRefresh(status) {
+  if (state.refreshTimer) {
+    window.clearTimeout(state.refreshTimer);
+    state.refreshTimer = null;
+  }
+  const delay = refreshDelay(status);
+  if (!delay || document.hidden) return;
+  state.refreshTimer = window.setTimeout(() => {
+    refreshDashboard();
+  }, delay);
+}
+
+async function refreshDashboard(options = {}) {
+  if (state.loading && !options.force) return;
+  state.loading = true;
+  try {
+    await loadDashboard();
+  } catch (error) {
+    document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
+  } finally {
+    state.loading = false;
+    scheduleNextRefresh(state.lastTradingStatus);
+  }
+}
+
 async function loadDashboard() {
   renderTabs();
   const response = await fetch(`/api/dashboard?timeframe=${state.timeframe}&limit=10`);
@@ -157,14 +202,16 @@ async function loadDashboard() {
   const data = await response.json();
   state.boardRankings = data.board_rankings;
   state.leaderRankings = data.leader_rankings;
+  state.lastTradingStatus = data.trading_status;
   renderIndex(data.index);
   renderStatus(data.trading_status);
   renderMeta(data);
   renderRankingCards("#boardRankings", state.boardRankings, "sector");
   renderRankingCards("#leaderRankings", state.leaderRankings, "stock");
   renderTurnoverChart();
-  const firstBoard = data.board_rankings?.[0]?.items?.[0]?.board_code;
-  if (firstBoard) await loadBoardDetail(firstBoard);
+  const fallbackBoard = data.board_rankings?.[0]?.items?.[0]?.board_code;
+  const boardCode = state.selectedBoardCode || fallbackBoard;
+  if (boardCode) await loadBoardDetail(boardCode);
 }
 
 async function loadBoardDetail(boardCode) {
@@ -178,6 +225,15 @@ async function loadBoardDetail(boardCode) {
   renderRankingCards("#stockRankings", state.stockRankings, "stock");
 }
 
-loadDashboard().catch((error) => {
-  document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (state.refreshTimer) {
+      window.clearTimeout(state.refreshTimer);
+      state.refreshTimer = null;
+    }
+    return;
+  }
+  refreshDashboard({ force: true });
 });
+
+refreshDashboard({ force: true });
