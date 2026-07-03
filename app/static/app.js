@@ -17,6 +17,7 @@ let state = {
   leaderRankings: [],
   stockRankings: [],
   selectedBoardCode: null,
+  chart: null,
 };
 
 const moneyFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
@@ -64,94 +65,103 @@ function renderIndex(index) {
 }
 
 function renderStatus(status) {
-  document.querySelector("#tradeStatus").textContent =
-    status.message || `${status.trade_date} ${status.session}`;
+  document.querySelector("#tradeStatus").textContent = status.message || `${status.trade_date} ${status.session}`;
 }
 
-function fillSelect(selector, rankings, selectedKey) {
-  const select = document.querySelector(selector);
-  select.innerHTML = rankings.map((block) => `<option value="${block.key}">${block.title}</option>`).join("");
-  if (selectedKey && rankings.some((block) => block.key === selectedKey)) {
-    select.value = selectedKey;
-  }
+function renderMeta(data) {
+  const updatedAt = data.index?.updated_at ? new Date(data.index.updated_at).toLocaleString("zh-CN", { hour12: false }) : "-";
+  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt}`;
 }
 
-function currentBlock(rankings, selector) {
-  const select = document.querySelector(selector);
-  return rankings.find((block) => block.key === select.value) || rankings[0];
-}
-
-function renderBoardTable() {
-  const block = currentBlock(state.boardRankings, "#boardRankingSelect");
-  const body = document.querySelector("#boardRankingBody");
-  body.innerHTML = (block?.items || [])
-    .map(
-      (item) => `
-        <tr data-board-code="${item.board_code}">
-          <td>${item.rank}</td>
-          <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
-          <td>${formatPercent(item.change_percent)}</td>
-          <td>${formatLarge(item.volume)}</td>
-          <td>${formatLarge(item.amount)}</td>
-          <td>${formatLarge(item.capital_flow)}</td>
-          <td><span class="name">${item.leader_stock_name || "-"}</span><span class="sub">${item.leader_stock_code || ""}</span></td>
-        </tr>`
-    )
-    .join("");
-  body.querySelectorAll("tr").forEach((row) => {
+function renderRankingCards(selector, rankings, kind) {
+  const container = document.querySelector(selector);
+  container.innerHTML = rankings.map((block) => rankingCard(block, kind)).join("");
+  container.querySelectorAll("tr[data-board-code]").forEach((row) => {
     row.addEventListener("click", () => loadBoardDetail(row.dataset.boardCode));
   });
 }
 
-function renderLeaderTable() {
-  const block = currentBlock(state.leaderRankings, "#leaderRankingSelect");
-  document.querySelector("#leaderRankingBody").innerHTML = (block?.items || [])
-    .map(
-      (item) => `
-        <tr data-board-code="${item.board_code}">
-          <td>${item.rank}</td>
-          <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
-          <td><span class="name">${item.stock_name}</span><span class="sub">${item.stock_code}</span></td>
-          <td>${item.current_price ? Number(item.current_price).toFixed(2) : "-"}</td>
-          <td>${formatPercent(item.change_percent)}</td>
-          <td>${formatLarge(item.amount)}</td>
-          <td>${formatLarge(item.capital_flow)}</td>
-        </tr>`
-    )
-    .join("");
+function rankingCard(block, kind) {
+  const rows = (block.items || []).map((item) => rankingRow(item, kind)).join("");
+  return `
+    <article class="rank-card">
+      <h3>${block.title}</h3>
+      <div class="mini-table">
+        <table>
+          <thead>${tableHead(kind)}</thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
 }
 
-function renderStockTable() {
-  const block = currentBlock(state.stockRankings, "#stockRankingSelect");
-  document.querySelector("#stockRankingBody").innerHTML = (block?.items || [])
-    .map(
-      (item) => `
-        <tr>
-          <td>${item.rank}</td>
-          <td><span class="name">${item.stock_name}</span><span class="sub">${item.stock_code}</span></td>
-          <td>${item.current_price ? Number(item.current_price).toFixed(2) : "-"}</td>
-          <td>${formatPercent(item.change_percent)}</td>
-          <td>${formatLarge(item.volume)}</td>
-          <td>${formatLarge(item.amount)}</td>
-          <td>${formatLarge(item.capital_flow)}</td>
-          <td>${item.is_leader ? '<span class="leader-tag">是</span>' : "-"}</td>
-        </tr>`
-    )
-    .join("");
+function tableHead(kind) {
+  if (kind === "sector") {
+    return `<tr><th>排名</th><th>板块</th><th>涨跌幅</th><th>成交额</th><th>资金量</th><th>龙头股</th></tr>`;
+  }
+  return `<tr><th>排名</th><th>股票</th><th>板块</th><th>价格</th><th>涨跌幅</th><th>成交额</th><th>资金量</th></tr>`;
+}
+
+function rankingRow(item, kind) {
+  if (kind === "sector") {
+    return `
+      <tr data-board-code="${item.board_code}">
+        <td>${item.rank}</td>
+        <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
+        <td>${formatPercent(item.change_percent)}</td>
+        <td>${formatLarge(item.amount)}</td>
+        <td>${formatLarge(item.capital_flow)}</td>
+        <td><span class="name">${item.leader_stock_name || "-"}</span><span class="sub">${item.leader_stock_code || ""}</span></td>
+      </tr>`;
+  }
+  return `
+    <tr data-board-code="${item.board_code}">
+      <td>${item.rank}</td>
+      <td><span class="name">${item.stock_name}</span><span class="sub">${item.stock_code}${item.is_leader ? " / 龙头" : ""}</span></td>
+      <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
+      <td>${item.current_price ? Number(item.current_price).toFixed(2) : "-"}</td>
+      <td>${formatPercent(item.change_percent)}</td>
+      <td>${formatLarge(item.amount)}</td>
+      <td>${formatLarge(item.capital_flow)}</td>
+    </tr>`;
+}
+
+function renderTurnoverChart() {
+  const block = state.boardRankings.find((item) => item.key === "sector_turnover") || state.boardRankings[0];
+  const el = document.querySelector("#turnoverChart");
+  if (!block || !window.echarts) {
+    el.textContent = "图表资源未加载，排行榜数据仍可查看。";
+    return;
+  }
+  if (!state.chart) {
+    state.chart = echarts.init(el);
+    window.addEventListener("resize", () => state.chart.resize());
+  }
+  const items = [...block.items].reverse();
+  state.chart.setOption({
+    animation: false,
+    grid: { left: 96, right: 28, top: 18, bottom: 24 },
+    xAxis: { type: "value", axisLabel: { formatter: (value) => formatLarge(value) } },
+    yAxis: { type: "category", data: items.map((item) => item.board_name) },
+    tooltip: { trigger: "axis", valueFormatter: (value) => formatLarge(value) },
+    series: [{ type: "bar", data: items.map((item) => item.amount), itemStyle: { color: "#1167b1" } }],
+  });
 }
 
 async function loadDashboard() {
   renderTabs();
   const response = await fetch(`/api/dashboard?timeframe=${state.timeframe}&limit=10`);
+  if (!response.ok) throw new Error(`dashboard request failed: ${response.status}`);
   const data = await response.json();
   state.boardRankings = data.board_rankings;
   state.leaderRankings = data.leader_rankings;
   renderIndex(data.index);
   renderStatus(data.trading_status);
-  fillSelect("#boardRankingSelect", state.boardRankings);
-  fillSelect("#leaderRankingSelect", state.leaderRankings);
-  renderBoardTable();
-  renderLeaderTable();
+  renderMeta(data);
+  renderRankingCards("#boardRankings", state.boardRankings, "sector");
+  renderRankingCards("#leaderRankings", state.leaderRankings, "stock");
+  renderTurnoverChart();
   const firstBoard = data.board_rankings?.[0]?.items?.[0]?.board_code;
   if (firstBoard) await loadBoardDetail(firstBoard);
 }
@@ -159,15 +169,14 @@ async function loadDashboard() {
 async function loadBoardDetail(boardCode) {
   state.selectedBoardCode = boardCode;
   const response = await fetch(`/api/boards/${boardCode}?timeframe=${state.timeframe}&limit=10`);
+  if (!response.ok) return;
   const data = await response.json();
   state.stockRankings = data.stock_rankings;
   document.querySelector("#detailTitle").textContent = `${data.board.name} 板块详情`;
-  fillSelect("#stockRankingSelect", state.stockRankings);
-  renderStockTable();
+  document.querySelector("#detailMeta").textContent = `${formatPercent(data.board.change_percent).replace(/<[^>]*>/g, "")} / ${formatLarge(data.board.amount)}`;
+  renderRankingCards("#stockRankings", state.stockRankings, "stock");
 }
 
-document.querySelector("#boardRankingSelect").addEventListener("change", renderBoardTable);
-document.querySelector("#leaderRankingSelect").addEventListener("change", renderLeaderTable);
-document.querySelector("#stockRankingSelect").addEventListener("change", renderStockTable);
-
-loadDashboard();
+loadDashboard().catch((error) => {
+  document.querySelector("#tradeStatus").textContent = error.message;
+});

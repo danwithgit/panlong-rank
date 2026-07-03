@@ -116,6 +116,47 @@ main {
   gap: 18px;
 }
 
+.chart-band {
+  margin-bottom: 18px;
+}
+
+.chart {
+  height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px;
+  color: var(--muted);
+}
+
+.rank-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.rank-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.rank-card h3 {
+  margin: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #f9fbfe;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.mini-table {
+  overflow: auto;
+}
+
 .detail {
   margin-top: 18px;
 }
@@ -131,6 +172,12 @@ main {
 .section-head h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
 }
 
 select {
@@ -152,7 +199,7 @@ select {
 
 table {
   width: 100%;
-  min-width: 760px;
+  min-width: 680px;
   border-collapse: collapse;
 }
 
@@ -237,5 +284,13 @@ tbody tr:hover {
 
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .rank-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart {
+    height: 280px;
   }
 }

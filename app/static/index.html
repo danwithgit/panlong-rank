@@ -17,82 +17,40 @@
 
     <main>
       <section class="index-panel" id="indexPanel"></section>
-
       <nav class="tabs" id="timeframeTabs" aria-label="时间维度"></nav>
 
-      <section class="layout">
-        <div>
-          <div class="section-head">
-            <h2>板块排行榜</h2>
-            <select id="boardRankingSelect" aria-label="板块排行榜类型"></select>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>排名</th>
-                  <th>板块</th>
-                  <th>涨跌幅</th>
-                  <th>成交量</th>
-                  <th>成交额</th>
-                  <th>资金量</th>
-                  <th>龙头股</th>
-                </tr>
-              </thead>
-              <tbody id="boardRankingBody"></tbody>
-            </table>
-          </div>
+      <section class="chart-band">
+        <div class="section-head">
+          <h2>板块成交额 Top 10</h2>
+          <span id="dataMeta" class="meta">等待数据</span>
         </div>
+        <div id="turnoverChart" class="chart"></div>
+      </section>
 
-        <div>
-          <div class="section-head">
-            <h2>龙头股排行榜</h2>
-            <select id="leaderRankingSelect" aria-label="龙头股排行榜类型"></select>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>排名</th>
-                  <th>板块</th>
-                  <th>股票</th>
-                  <th>价格</th>
-                  <th>涨跌幅</th>
-                  <th>成交额</th>
-                  <th>资金量</th>
-                </tr>
-              </thead>
-              <tbody id="leaderRankingBody"></tbody>
-            </table>
-          </div>
+      <section>
+        <div class="section-head">
+          <h2>板块排行榜</h2>
         </div>
+        <div class="rank-grid" id="boardRankings"></div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>龙头股排行榜</h2>
+        </div>
+        <div class="rank-grid" id="leaderRankings"></div>
       </section>
 
       <section class="detail">
         <div class="section-head">
           <h2 id="detailTitle">板块详情</h2>
-          <select id="stockRankingSelect" aria-label="个股排行榜类型"></select>
+          <span class="meta" id="detailMeta">点击板块查看</span>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>排名</th>
-                <th>股票</th>
-                <th>价格</th>
-                <th>涨跌幅</th>
-                <th>成交量</th>
-                <th>成交额</th>
-                <th>资金量</th>
-                <th>龙头</th>
-              </tr>
-            </thead>
-            <tbody id="stockRankingBody"></tbody>
-          </table>
-        </div>
+        <div class="rank-grid" id="stockRankings"></div>
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>
