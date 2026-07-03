@@ -7,6 +7,7 @@ pytest==8.3.4
 SQLAlchemy==2.0.36
 redis==5.2.1
 alembic==1.14.0
+psycopg[binary]==3.2.13
 
 # Optional runtime data providers. The app works without them in sample mode.
 akshare==1.18.64

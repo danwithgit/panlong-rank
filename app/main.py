@@ -6,10 +6,12 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db.session import SessionLocal, get_db, init_db
+from app.db.tables import JobLog
 from app.models import BoardDetailResponse, DashboardResponse, Timeframe
 from app.services.cache import get_cache
 from app.services.calendar import get_trading_status
@@ -74,6 +76,25 @@ def collect_now(settings: Settings = Depends(get_settings), db: Session = Depend
         "updated_at": snapshot.index.updated_at,
         "boards": len(snapshot.boards),
         "stocks": len(snapshot.stocks),
+    }
+
+
+@app.get("/api/admin/job-logs")
+def job_logs(limit: int = Query(default=20, ge=1, le=200), db: Session = Depends(get_db)):
+    rows = db.scalars(select(JobLog).order_by(JobLog.started_at.desc(), JobLog.id.desc()).limit(limit)).all()
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "job_name": row.job_name,
+                "status": row.status,
+                "started_at": row.started_at,
+                "finished_at": row.finished_at,
+                "error_message": row.error_message,
+                "rows_count": row.rows_count,
+            }
+            for row in rows
+        ]
     }
 
 

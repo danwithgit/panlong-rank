@@ -39,6 +39,14 @@ http://127.0.0.1:8000
 bash start.sh
 ```
 
+Docker 方式：
+
+```bash
+docker compose up --build
+```
+
+默认 compose 会启动 PostgreSQL、Redis 和应用。`DATA_PROVIDER` 默认设为 `sample`，验证部署流程后可改为 `auto` 或 `akshare`。
+
 数据库迁移可选执行：
 
 ```bash
@@ -70,6 +78,7 @@ python3 -m alembic upgrade head
 
 - `GET /api/health`
 - `POST /api/admin/collect`
+- `GET /api/admin/job-logs`
 - `GET /api/index/shanghai`
 - `GET /api/periods`
 - `GET /api/rank/sectors?period=tail&type=turnover`

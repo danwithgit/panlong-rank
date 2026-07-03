@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: panlong_rank
+      POSTGRES_USER: panlong
+      POSTGRES_PASSWORD: panlong
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql+psycopg://panlong:panlong@postgres:5432/panlong_rank
+      REDIS_URL: redis://redis:6379/0
+      DATA_PROVIDER: sample
+      SCHEDULER_ENABLED: "true"
+      COLLECT_ON_STARTUP: "true"
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:

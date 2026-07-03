@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
+import time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -10,6 +12,7 @@ from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, Tradi
 from app.services.sample_data import build_sample_snapshot
 
 CN_TZ = ZoneInfo("Asia/Shanghai")
+logger = logging.getLogger(__name__)
 
 
 class MarketDataProvider:
@@ -24,6 +27,18 @@ class SampleMarketDataProvider(MarketDataProvider):
 
 class AkshareMarketDataProvider(MarketDataProvider):
     def snapshot(self, trading_status: TradingStatus) -> MarketSnapshot:
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                return self._snapshot_once(trading_status)
+            except Exception as exc:
+                last_error = exc
+                logger.warning("AKShare snapshot attempt %s failed: %s", attempt, exc)
+                time.sleep(0.5 * attempt)
+        logger.error("AKShare unavailable, using sample data: %s", last_error)
+        return build_sample_snapshot(trading_status)
+
+    def _snapshot_once(self, trading_status: TradingStatus) -> MarketSnapshot:
         try:
             import akshare as ak
 
@@ -34,7 +49,7 @@ class AkshareMarketDataProvider(MarketDataProvider):
                 raise RuntimeError("AKShare returned incomplete market data")
             return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=trading_status)
         except Exception:
-            return build_sample_snapshot(trading_status)
+            raise
 
     def _index_quote(self, ak, trading_status: TradingStatus) -> IndexQuote:
         now = datetime.now(CN_TZ)
