@@ -38,23 +38,67 @@ class AkshareMarketDataProvider(MarketDataProvider):
         logger.error("AKShare unavailable after retries: %s", last_error)
         raise RuntimeError(f"AKShare unavailable after retries: {last_error}") from last_error
 
-    def _snapshot_once(self, trading_status: TradingStatus) -> MarketSnapshot:
-        try:
+    def _snapshot_once(self, trading_status: TradingStatus, ak=None) -> MarketSnapshot:
+        if ak is None:
             import akshare as ak
 
-            index = self._index_quote(ak, trading_status)
-            boards = self._board_quotes(ak)
-            stocks = self._stock_quotes(ak, boards)
-            if not boards or not stocks:
-                raise RuntimeError("AKShare returned incomplete market data")
-            return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=trading_status, data_source="akshare")
-        except Exception:
-            raise
+        source_parts: list[str] = []
+        index = self._first_success(
+            "index quote",
+            [
+                ("akshare_em", lambda: self._index_quote_em(ak, trading_status)),
+                ("akshare_sina", lambda: self._index_quote_sina(ak, trading_status)),
+            ],
+            source_parts,
+        )
+        boards = self._first_success(
+            "board quotes",
+            [
+                ("akshare_em", lambda: self._board_quotes_em(ak)),
+                ("akshare_sina", lambda: self._board_quotes_sina(ak)),
+            ],
+            source_parts,
+        )
+        stocks = self._first_success(
+            "stock quotes",
+            self._stock_quote_candidates(ak, boards, source_parts),
+            source_parts,
+        )
+        if not boards or not stocks:
+            raise RuntimeError("AKShare returned incomplete market data")
+        data_source = "+".join(dict.fromkeys(source_parts)) or "akshare"
+        index = index.model_copy(update={"data_source": data_source})
+        return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=trading_status, data_source=data_source)
 
-    def _index_quote(self, ak, trading_status: TradingStatus) -> IndexQuote:
+    def _first_success(self, label: str, candidates, source_parts: list[str]):
+        errors = []
+        for source, loader in candidates:
+            try:
+                result = loader()
+                if not result:
+                    raise RuntimeError(f"{source} returned empty {label}")
+                source_parts.append(source)
+                return result
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+                logger.warning("AKShare %s provider %s failed: %s", label, source, exc)
+        raise RuntimeError(f"All AKShare {label} providers failed: {'; '.join(errors)}")
+
+    def _stock_quote_candidates(self, ak, boards: list[BoardQuote], source_parts: list[str]):
+        if "akshare_sina" in source_parts:
+            return [("akshare_sina", lambda: self._stock_quotes_sina(ak, boards))]
+        return [
+            ("akshare_em", lambda: self._stock_quotes_em(ak, boards)),
+            ("akshare_sina", lambda: self._stock_quotes_sina(ak, boards)),
+        ]
+
+    def _index_quote_em(self, ak, trading_status: TradingStatus) -> IndexQuote:
         now = datetime.now(CN_TZ)
         df = ak.stock_zh_index_spot_em()
-        row = _find_row(df, ["代码", "code"], "000001") or _find_contains(df, ["名称", "name"], "上证")
+        row = _find_first(
+            _find_row(df, ["代码", "code"], "000001"),
+            _find_contains(df, ["名称", "name"], "上证"),
+        )
         if row is None:
             raise RuntimeError("SSE index quote not found")
         current = _num(row, ["最新价", "最新", "price"])
@@ -73,7 +117,32 @@ class AkshareMarketDataProvider(MarketDataProvider):
             data_source="akshare",
         )
 
-    def _board_quotes(self, ak) -> list[BoardQuote]:
+    def _index_quote_sina(self, ak, trading_status: TradingStatus) -> IndexQuote:
+        now = datetime.now(CN_TZ)
+        df = ak.stock_zh_index_spot_sina()
+        row = _find_first(
+            _find_row(df, ["代码", "code"], "sh000001"),
+            _find_row(df, ["代码", "code"], "000001"),
+            _find_contains(df, ["名称", "name"], "上证"),
+        )
+        if row is None:
+            raise RuntimeError("Sina SSE index quote not found")
+        current = _num(row, ["最新价", "最新", "price"])
+        change = _num(row, ["涨跌额", "pricechange"])
+        return IndexQuote(
+            name=str(_value(row, ["名称", "name"], "上证指数")),
+            code=_normalize_code(str(_value(row, ["代码", "code"], "000001"))),
+            current=current,
+            change=change,
+            change_percent=_num(row, ["涨跌幅", "涨跌幅%", "changepercent"]),
+            volume=_num(row, ["成交量", "volume"]),
+            amount=_num(row, ["成交额", "amount"]),
+            updated_at=now,
+            trading_status=trading_status,
+            data_source="akshare_sina",
+        )
+
+    def _board_quotes_em(self, ak) -> list[BoardQuote]:
         now = datetime.now(CN_TZ)
         df = ak.stock_board_industry_name_em()
         boards: list[BoardQuote] = []
@@ -93,7 +162,31 @@ class AkshareMarketDataProvider(MarketDataProvider):
             )
         return [b for b in boards if b.code and b.name]
 
-    def _stock_quotes(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
+    def _board_quotes_sina(self, ak) -> list[BoardQuote]:
+        now = datetime.now(CN_TZ)
+        df = ak.stock_sector_spot()
+        boards: list[BoardQuote] = []
+        for _, row in df.head(49).iterrows():
+            code = str(_value(row, ["label", "代码"], ""))
+            name = str(_value(row, ["板块", "name"], ""))
+            amount = _num(row, ["总成交额", "成交额", "amount"])
+            leader_code = _normalize_code(str(_value(row, ["股票代码", "leader_code"], "")))
+            boards.append(
+                BoardQuote(
+                    code=code,
+                    name=name,
+                    change_percent=_num(row, ["涨跌幅", "changepercent"]),
+                    volume=_num(row, ["总成交量", "成交量", "volume"]),
+                    amount=amount,
+                    capital_flow=amount,
+                    leader_stock_code=leader_code or None,
+                    leader_stock_name=str(_value(row, ["股票名称", "leader_name"], "")) or None,
+                    updated_at=now,
+                )
+            )
+        return [b for b in boards if b.code and b.name]
+
+    def _stock_quotes_em(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
         now = datetime.now(CN_TZ)
         stocks: list[StockQuote] = []
         selected_boards = boards[:16]
@@ -115,6 +208,35 @@ class AkshareMarketDataProvider(MarketDataProvider):
                         volume=_num(row, ["成交量"]),
                         amount=amount,
                         capital_flow=_num(row, ["主力净流入", "资金净流入"]) or amount,
+                        updated_at=now,
+                    )
+                )
+        return [s for s in stocks if s.code and s.name]
+
+    def _stock_quotes_sina(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
+        now = datetime.now(CN_TZ)
+        stocks: list[StockQuote] = []
+        selected_boards = boards[:30]
+        for board in selected_boards:
+            try:
+                df = ak.stock_sector_detail(sector=board.code)
+            except Exception as exc:
+                logger.warning("AKShare Sina board detail failed for %s %s: %s", board.code, board.name, exc)
+                continue
+            for _, row in df.head(30).iterrows():
+                amount = _num(row, ["amount", "成交额"])
+                code = _normalize_code(str(_value(row, ["code", "代码", "symbol"], "")))
+                stocks.append(
+                    StockQuote(
+                        code=code,
+                        name=str(_value(row, ["name", "名称"], "")),
+                        board_code=board.code,
+                        board_name=board.name,
+                        price=_num(row, ["trade", "最新价", "price"]),
+                        change_percent=_num(row, ["changepercent", "涨跌幅"]),
+                        volume=_num(row, ["volume", "成交量"]),
+                        amount=amount,
+                        capital_flow=amount,
                         updated_at=now,
                     )
                 )
@@ -148,6 +270,13 @@ def _find_contains(df: pd.DataFrame, columns: list[str], expected: str):
     return None
 
 
+def _find_first(*rows):
+    for row in rows:
+        if row is not None:
+            return row
+    return None
+
+
 def _has_any(row, columns: list[str]) -> bool:
     return any(column in row for column in columns)
 
@@ -165,3 +294,10 @@ def _num(row, columns: list[str]) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _normalize_code(value: str) -> str:
+    code = value.strip()
+    if code.startswith(("sh", "sz", "bj")) and len(code) > 2:
+        return code[2:]
+    return code

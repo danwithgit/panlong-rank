@@ -21,6 +21,7 @@
 - 增加上游采集限频：默认最小采集间隔 60 秒，避免用户请求直接打到第三方接口。
 - 正式模式下禁止样例数据兜底：`DATA_PROVIDER=auto` 或 `akshare` 采集失败时不写入假数据。
 - 样例数据仅保留给开发和测试：必须显式设置 `DATA_PROVIDER=sample`。
+- 已增加 AKShare 真实数据源降级链路：Eastmoney `push2` 实时接口不可用时，自动切到 AKShare Sina 指数、板块和板块成分接口。
 
 ## 关键文件
 
@@ -45,7 +46,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-服务可以启动。由于当前环境访问 AKShare/Eastmoney 上游失败，Fresh DB 下真实快照表为空，API 正确返回 503：
+服务可以启动。早期版本由于当前环境访问 AKShare/Eastmoney `push2` 上游失败，Fresh DB 下真实快照表为空，API 正确返回 503：
 
 ```text
 GET /api/index/shanghai -> 503
@@ -62,7 +63,7 @@ rankings         0
 job_logs         1
 ```
 
-`job_logs` 中记录的失败原因包括 AKShare 上游连接失败：
+旧版本 `job_logs` 中记录的失败原因包括 AKShare 上游连接失败：
 
 ```text
 AKShare unavailable after retries: RemoteDisconnected('Remote end closed connection without response')
@@ -94,7 +95,41 @@ push2ipv6.trafficmanager.cn A 14.103.191.91
 - `https://48.push2.eastmoney.com/...` 强制 IPv4 时出现 302，跟随跳转后空响应。
 - `https://push2.eastmoney.com/...` 在 VPS 上返回 502。
 
-结论：这不是 AKShare 需要 token 的问题，也不是简单的“域名不存在”。更可能是 Eastmoney push2 动态节点对不同网络出口、IPv4/IPv6、CDN 节点或请求路径不稳定，AKShare 当前接口在该运行环境下无法稳定拿到真实数据。
+结论：这不是 AKShare 需要 token 的问题，也不是简单的“域名不存在”。更可能是 Eastmoney push2 动态节点对不同网络出口、IPv4/IPv6、CDN 节点或请求路径不稳定，AKShare 当前 Eastmoney 实时接口在该运行环境下无法稳定拿到真实数据。
+
+后续验证结果：
+
+- `stock_zh_index_spot_sina` 可用，能返回上证指数真实数据，例如 2026-07-03 上证指数 `4043.6432`。
+- `stock_zh_a_spot` 可用，曾验证返回 5527 只 A 股。
+- `stock_sector_spot` 可用，能返回 49 个行业板块。
+- `stock_sector_detail` 可用，能返回板块内股票。
+- Eastmoney `push2his` 历史/分时接口可用，但不能完整替代实时板块排行。
+
+当前 provider 已使用以下降级链路：
+
+```text
+上证指数: stock_zh_index_spot_em -> stock_zh_index_spot_sina
+板块排行: stock_board_industry_name_em -> stock_sector_spot
+板块内股票: stock_board_industry_cons_em -> stock_sector_detail
+```
+
+当指数或板块已经降级到 Sina 时，板块内股票会直接使用 Sina 接口，避免继续请求已知失败的 Eastmoney 成分股接口。
+
+注意：Sina fallback 没有东方财富主力资金流字段，当前资金量字段用成交额作为排序指标，不能当作真实主力净流入。
+
+2026-07-03 Docker 验证结果：
+
+```text
+GET /api/index/shanghai -> 200
+current_price: 4043.6432
+data_source: akshare_sina
+is_sample_data: false
+
+index_snapshots: 1
+sector_snapshots: 49
+stock_snapshots: 749
+latest job_logs: success, rows_count: 799
+```
 
 ## 当前设计原则
 
@@ -121,7 +156,7 @@ push2ipv6.trafficmanager.cn A 14.103.191.91
    PY
    ```
 
-2. 若 AKShare 在目标机器仍不可用，优先实现一个真实 Eastmoney Provider，不再完全依赖 AKShare 随机编号子域名。
+2. 若 AKShare Sina fallback 后仍不足以满足资金流精度，优先实现一个真实 Eastmoney Provider 或接入授权数据源，不再完全依赖 AKShare 随机编号子域名。
 
    已知需要重新验证的接口方向：
 
