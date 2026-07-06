@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
+from app.db.tables import IndexSnapshot
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
 from app.services.snapshot_store import save_snapshot, snapshot_for_period
 
@@ -122,3 +123,37 @@ def test_latest_snapshot_uses_one_collection_batch():
     assert len(result.stocks) == 1
     assert result.boards[0].updated_at == datetime(2026, 7, 3, 10, 10)
     assert result.stocks[0].updated_at == datetime(2026, 7, 3, 10, 10)
+
+
+def test_latest_snapshot_skips_incomplete_newer_batch():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    complete_at = datetime(2026, 7, 3, 10, 10)
+    incomplete_at = datetime(2026, 7, 3, 10, 20)
+    save_snapshot(db, _snapshot(complete_at, 200, 3000, 11), "sample")
+    db.add(
+        IndexSnapshot(
+            index_code="000001",
+            index_name="上证指数",
+            current_price=12,
+            change_value=2,
+            change_percent=2,
+            volume=300,
+            turnover=5000,
+            snapshot_time=incomplete_at,
+            trade_date="2026-07-03",
+            data_source="sample",
+        )
+    )
+    db.commit()
+
+    result = snapshot_for_period(db, status, None, None)
+
+    assert result.index.updated_at == complete_at
+    assert result.boards[0].updated_at == complete_at
+    assert result.stocks[0].updated_at == complete_at

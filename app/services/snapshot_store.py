@@ -107,14 +107,12 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
 
 def latest_snapshot(db: Session, status: TradingStatus) -> Optional[MarketSnapshot]:
     trade_date = status.trade_date if status.is_trade_day else status.last_trade_date
-    index_row = _latest_index(db, trade_date)
-    if index_row is None:
-        return None
-    sector_rows = _sector_rows_at(db, trade_date, index_row.snapshot_time)
-    stock_rows = _latest_stock_rows(db, trade_date, index_row.snapshot_time)
-    if not sector_rows or not stock_rows:
-        return None
-    return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
+    for index_row in _latest_index_rows(db, trade_date, limit=20):
+        sector_rows = _sector_rows_at(db, trade_date, index_row.snapshot_time)
+        stock_rows = _latest_stock_rows(db, trade_date, index_row.snapshot_time)
+        if sector_rows and stock_rows:
+            return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
+    return None
 
 
 def snapshot_for_period(db: Session, status: TradingStatus, start: Optional[datetime], end: Optional[datetime]) -> Optional[MarketSnapshot]:
@@ -260,6 +258,17 @@ def _latest_index(db: Session, trade_date: str) -> Optional[IndexSnapshot]:
         .where(IndexSnapshot.trade_date == trade_date)
         .order_by(IndexSnapshot.snapshot_time.desc(), IndexSnapshot.id.desc())
         .limit(1)
+    )
+
+
+def _latest_index_rows(db: Session, trade_date: str, limit: int) -> list[IndexSnapshot]:
+    return list(
+        db.scalars(
+            select(IndexSnapshot)
+            .where(IndexSnapshot.trade_date == trade_date)
+            .order_by(IndexSnapshot.snapshot_time.desc(), IndexSnapshot.id.desc())
+            .limit(limit)
+        )
     )
 
 

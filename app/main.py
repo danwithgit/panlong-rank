@@ -151,7 +151,9 @@ def dashboard(
 ):
     cache = get_cache(settings)
     status = get_trading_status(settings)
-    cache_key = f"dashboard:{timeframe.value}:{limit}:{status.trade_date}:{status.last_trade_date}"
+    latest = latest_snapshot(db, status)
+    latest_stamp = latest.index.updated_at.isoformat() if latest else "-"
+    cache_key = f"dashboard:{timeframe.value}:{limit}:{status.trade_date}:{status.last_trade_date}:{latest_stamp}"
     cached = cache.get_json(cache_key)
     if cached:
         return cached
@@ -277,7 +279,12 @@ def _rank_response(
 ):
     status = get_trading_status(settings)
     cache = get_cache(settings)
-    cache_key = f"rank:{target_type}:{rank_type}:{period.value}:{sector_code or '-'}:{limit}:{status.trade_date}:{status.last_trade_date}"
+    latest = latest_snapshot(db, status)
+    latest_stamp = latest.index.updated_at.isoformat() if latest else "-"
+    cache_key = (
+        f"rank:{target_type}:{rank_type}:{period.value}:{sector_code or '-'}:"
+        f"{limit}:{status.trade_date}:{status.last_trade_date}:{latest_stamp}"
+    )
     cached = cache.get_json(cache_key)
     if cached:
         return cached
