@@ -21,6 +21,7 @@ let state = {
   refreshTimer: null,
   loading: false,
   lastTradingStatus: null,
+  requestSeq: 0,
 };
 
 const moneyFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
@@ -86,6 +87,21 @@ function renderRankingCards(selector, rankings, kind) {
   container.querySelectorAll("tr[data-board-code]").forEach((row) => {
     row.addEventListener("click", () => loadBoardDetail(row.dataset.boardCode));
   });
+}
+
+function renderLoadingState(label = "加载中") {
+  document.querySelector("#dataMeta").textContent = label;
+  document.querySelector("#boardRankings").innerHTML = "";
+  document.querySelector("#leaderRankings").innerHTML = "";
+  document.querySelector("#stockRankings").innerHTML = "";
+  document.querySelector("#detailTitle").textContent = "板块详情";
+  document.querySelector("#detailMeta").textContent = "等待数据";
+  const chartEl = document.querySelector("#turnoverChart");
+  if (state.chart) {
+    state.chart.clear();
+  } else {
+    chartEl.textContent = label;
+  }
 }
 
 function rankingCard(block, kind) {
@@ -184,22 +200,32 @@ function scheduleNextRefresh(status) {
 
 async function refreshDashboard(options = {}) {
   if (state.loading && !options.force) return;
+  const seq = ++state.requestSeq;
   state.loading = true;
+  renderLoadingState(`${timeframeLabel(state.timeframe)} 加载中`);
   try {
-    await loadDashboard();
+    await loadDashboard(seq);
   } catch (error) {
+    if (seq !== state.requestSeq) return;
     document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
+    renderLoadingState(`数据不可用：${error.message}`);
   } finally {
+    if (seq !== state.requestSeq) return;
     state.loading = false;
     scheduleNextRefresh(state.lastTradingStatus);
   }
 }
 
-async function loadDashboard() {
+function timeframeLabel(timeframe) {
+  return timeframes.find(([key]) => key === timeframe)?.[1] || timeframe;
+}
+
+async function loadDashboard(seq) {
   renderTabs();
   const response = await fetch(`/api/dashboard?timeframe=${state.timeframe}&limit=10`);
   if (!response.ok) throw new Error(`dashboard request failed: ${response.status}`);
   const data = await response.json();
+  if (seq !== state.requestSeq) return;
   state.boardRankings = data.board_rankings;
   state.leaderRankings = data.leader_rankings;
   state.lastTradingStatus = data.trading_status;
@@ -211,14 +237,15 @@ async function loadDashboard() {
   renderTurnoverChart();
   const fallbackBoard = data.board_rankings?.[0]?.items?.[0]?.board_code;
   const boardCode = state.selectedBoardCode || fallbackBoard;
-  if (boardCode) await loadBoardDetail(boardCode);
+  if (boardCode) await loadBoardDetail(boardCode, seq);
 }
 
-async function loadBoardDetail(boardCode) {
+async function loadBoardDetail(boardCode, seq = state.requestSeq) {
   state.selectedBoardCode = boardCode;
   const response = await fetch(`/api/boards/${boardCode}?timeframe=${state.timeframe}&limit=10`);
   if (!response.ok) return;
   const data = await response.json();
+  if (seq !== state.requestSeq) return;
   state.stockRankings = data.stock_rankings;
   document.querySelector("#detailTitle").textContent = `${data.board.name} 板块详情`;
   document.querySelector("#detailMeta").textContent = `${formatPercent(data.board.change_percent).replace(/<[^>]*>/g, "")} / ${formatLarge(data.board.amount)}`;

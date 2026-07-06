@@ -35,6 +35,7 @@ def save_trading_calendar(db: Session, status: TradingStatus) -> None:
 def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> int:
     source = snapshot.data_source if snapshot.data_source != "unknown" else data_source
     trade_date = snapshot.trading_status.last_trade_date if not snapshot.trading_status.is_trade_day else snapshot.trading_status.trade_date
+    snapshot_time = snapshot.index.updated_at.replace(tzinfo=None)
     save_trading_calendar(db, snapshot.trading_status)
     leader_map = _leader_map(db, snapshot)
     rows = 0
@@ -48,7 +49,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
             change_percent=snapshot.index.change_percent,
             volume=snapshot.index.volume,
             turnover=snapshot.index.amount,
-            snapshot_time=snapshot.index.updated_at.replace(tzinfo=None),
+            snapshot_time=snapshot_time,
             trade_date=trade_date,
             data_source=source,
         )
@@ -67,7 +68,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
                 fund_amount=board.capital_flow,
                 leader_stock_code=leader[0] if leader else board.leader_stock_code,
                 leader_stock_name=leader[1] if leader else board.leader_stock_name,
-                snapshot_time=board.updated_at.replace(tzinfo=None),
+                snapshot_time=snapshot_time,
                 trade_date=trade_date,
                 data_source=source,
             )
@@ -94,7 +95,7 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
                 low_price=stock.price,
                 open_price=stock.price,
                 previous_close=0,
-                snapshot_time=stock.updated_at.replace(tzinfo=None),
+                snapshot_time=snapshot_time,
                 trade_date=trade_date,
                 data_source=source,
             )
@@ -109,8 +110,8 @@ def latest_snapshot(db: Session, status: TradingStatus) -> Optional[MarketSnapsh
     index_row = _latest_index(db, trade_date)
     if index_row is None:
         return None
-    sector_rows = _latest_sector_rows(db, trade_date)
-    stock_rows = _latest_stock_rows(db, trade_date)
+    sector_rows = _sector_rows_at(db, trade_date, index_row.snapshot_time)
+    stock_rows = _latest_stock_rows(db, trade_date, index_row.snapshot_time)
     if not sector_rows or not stock_rows:
         return None
     return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
@@ -122,10 +123,12 @@ def snapshot_for_period(db: Session, status: TradingStatus, start: Optional[date
         return latest_snapshot(db, status)
     end_snapshot = _snapshot_at_or_before(db, status, trade_date, end)
     if end_snapshot is None:
-        return latest_snapshot(db, status)
+        return None
     start_snapshot = _snapshot_at_or_before(db, status, trade_date, start)
     if start_snapshot is None:
-        return end_snapshot
+        return None
+    if start_snapshot.index.updated_at == end_snapshot.index.updated_at:
+        return None
     return diff_snapshots(start_snapshot, end_snapshot)
 
 
@@ -261,43 +264,30 @@ def _latest_index(db: Session, trade_date: str) -> Optional[IndexSnapshot]:
 
 
 def _latest_sector_rows(db: Session, trade_date: str) -> list[SectorSnapshot]:
-    latest_by_code = (
-        select(SectorSnapshot.sector_code, func.max(SectorSnapshot.snapshot_time).label("snapshot_time"))
-        .where(SectorSnapshot.trade_date == trade_date)
-        .group_by(SectorSnapshot.sector_code)
-        .subquery()
-    )
+    latest_time = db.scalar(select(func.max(SectorSnapshot.snapshot_time)).where(SectorSnapshot.trade_date == trade_date))
+    if latest_time is None:
+        return []
+    return _sector_rows_at(db, trade_date, latest_time)
+
+
+def _sector_rows_at(db: Session, trade_date: str, snapshot_time: datetime) -> list[SectorSnapshot]:
     return list(
         db.scalars(
             select(SectorSnapshot)
-            .join(
-                latest_by_code,
-                and_(
-                    SectorSnapshot.sector_code == latest_by_code.c.sector_code,
-                    SectorSnapshot.snapshot_time == latest_by_code.c.snapshot_time,
-                ),
-            )
+            .where(SectorSnapshot.trade_date == trade_date, SectorSnapshot.snapshot_time == snapshot_time)
             .order_by(SectorSnapshot.sector_code)
         )
     )
 
 
-def _latest_stock_rows(db: Session, trade_date: str) -> list[tuple[StockSnapshot, StockSectorMap]]:
-    latest_by_code = (
-        select(StockSnapshot.stock_code, func.max(StockSnapshot.snapshot_time).label("snapshot_time"))
-        .where(StockSnapshot.trade_date == trade_date)
-        .group_by(StockSnapshot.stock_code)
-        .subquery()
-    )
+def _latest_stock_rows(db: Session, trade_date: str, snapshot_time: Optional[datetime] = None) -> list[tuple[StockSnapshot, StockSectorMap]]:
+    if snapshot_time is None:
+        snapshot_time = db.scalar(select(func.max(StockSnapshot.snapshot_time)).where(StockSnapshot.trade_date == trade_date))
+    if snapshot_time is None:
+        return []
     rows = db.execute(
         select(StockSnapshot, StockSectorMap)
-        .join(
-            latest_by_code,
-            and_(
-                StockSnapshot.stock_code == latest_by_code.c.stock_code,
-                StockSnapshot.snapshot_time == latest_by_code.c.snapshot_time,
-            ),
-        )
+        .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
         .join(StockSectorMap, StockSnapshot.stock_code == StockSectorMap.stock_code)
         .order_by(StockSnapshot.stock_code)
     ).all()
@@ -324,37 +314,14 @@ def _snapshot_at_or_before(
     sector_rows = list(
         db.scalars(
             select(SectorSnapshot)
-            .where(SectorSnapshot.trade_date == trade_date, SectorSnapshot.snapshot_time <= snapshot_time)
-            .order_by(SectorSnapshot.snapshot_time.desc())
+            .where(SectorSnapshot.trade_date == trade_date, SectorSnapshot.snapshot_time == snapshot_time)
+            .order_by(SectorSnapshot.sector_code)
         )
     )
-    stock_rows = _latest_stock_rows_at_or_before(db, trade_date, snapshot_time)
+    stock_rows = _latest_stock_rows(db, trade_date, snapshot_time)
     if not sector_rows or not stock_rows:
         return None
-    latest_sectors = _dedupe_by(sector_rows, "sector_code")
-    return _snapshot_from_rows(index_row, latest_sectors, stock_rows, status)
-
-
-def _latest_stock_rows_at_or_before(db: Session, trade_date: str, target: datetime) -> list[tuple[StockSnapshot, StockSectorMap]]:
-    latest_by_code = (
-        select(StockSnapshot.stock_code, func.max(StockSnapshot.snapshot_time).label("snapshot_time"))
-        .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time <= target)
-        .group_by(StockSnapshot.stock_code)
-        .subquery()
-    )
-    return list(
-        db.execute(
-            select(StockSnapshot, StockSectorMap)
-            .join(
-                latest_by_code,
-                and_(
-                    StockSnapshot.stock_code == latest_by_code.c.stock_code,
-                    StockSnapshot.snapshot_time == latest_by_code.c.snapshot_time,
-                ),
-            )
-            .join(StockSectorMap, StockSnapshot.stock_code == StockSectorMap.stock_code)
-        ).all()
-    )
+    return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
 
 
 def _snapshot_from_rows(
@@ -407,16 +374,6 @@ def _snapshot_from_rows(
     return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=status, data_source=index_row.data_source)
 
 
-def _dedupe_by(rows, attr: str):
-    seen = set()
-    result = []
-    for row in rows:
-        key = getattr(row, attr)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(row)
-    return result
 
 
 def _price_change_percent(start_percent: float, end_percent: float) -> float:

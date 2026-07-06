@@ -85,3 +85,40 @@ def test_snapshot_for_period_uses_database_interval_diff():
     assert result.stocks[0].volume == 80
     assert result.stocks[0].amount == 1100
     assert result.stocks[0].change_percent == 10
+
+
+def test_snapshot_for_period_requires_distinct_start_and_end_snapshots():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    at = datetime(2026, 7, 3, 10, 10)
+    save_snapshot(db, _snapshot(at, 100, 1000, 10), "sample")
+    db.commit()
+
+    result = snapshot_for_period(db, status, datetime(2026, 7, 3, 9, 30), datetime(2026, 7, 3, 10, 30))
+
+    assert result is None
+
+
+def test_latest_snapshot_uses_one_collection_batch():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 9, 40), 100, 1000, 10), "sample")
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 10, 10), 200, 3000, 11), "sample")
+    db.commit()
+
+    result = snapshot_for_period(db, status, None, None)
+
+    assert len(result.boards) == 1
+    assert len(result.stocks) == 1
+    assert result.boards[0].updated_at == datetime(2026, 7, 3, 10, 10)
+    assert result.stocks[0].updated_at == datetime(2026, 7, 3, 10, 10)

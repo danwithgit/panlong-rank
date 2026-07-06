@@ -47,8 +47,6 @@ def build_dashboard_from_db(db: Session, status, settings, timeframe: Timeframe,
         raise RuntimeError("no snapshot available")
     board_rankings = build_board_rankings_from_snapshot(snapshot, timeframe, limit)
     leader_rankings = build_leader_rankings_from_snapshot(snapshot, timeframe, limit)
-    save_ranking_blocks(db, status, timeframe, board_rankings + leader_rankings)
-    db.commit()
     return snapshot, board_rankings, leader_rankings
 
 
@@ -61,8 +59,6 @@ def build_board_detail_from_db(db: Session, status, settings, timeframe: Timefra
     if board is None:
         return None, [], snapshot
     rankings = build_stock_rankings_from_snapshot(snapshot, timeframe, limit, board_code=board_code)
-    save_ranking_blocks(db, status, timeframe, rankings)
-    db.commit()
     return board, rankings, snapshot
 
 
@@ -81,8 +77,6 @@ def rank_query(
     if snapshot is None:
         raise RuntimeError("no snapshot available")
     block = build_single_rank(snapshot, timeframe, rank_type, target_type, limit, sector_code=sector_code)
-    save_ranking_blocks(db, status, timeframe, [block])
-    db.commit()
     return block
 
 
