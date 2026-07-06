@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     max_realtime_snapshot_age_seconds: int = 600
     period_boundary_tolerance_seconds: int = 300
     max_period_snapshot_gap_seconds: int = 600
+    complete_day_min_snapshot_time: str = "14:50"
     use_sample_when_provider_fails: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

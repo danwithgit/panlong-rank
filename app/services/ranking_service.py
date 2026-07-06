@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 
@@ -39,7 +39,7 @@ def snapshot_for_timeframe_with_settings(db: Session, status, settings, timefram
     end = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.end)
     if start is None and end is None:
         snapshot = snapshot_for_period(db, status, start, end)
-        if settings is not None and _is_realtime_like(timeframe) and _is_stale_realtime(snapshot, status, settings):
+        if settings is not None and _is_realtime_like(timeframe) and _is_unusable_realtime(snapshot, status, settings):
             return None
         return snapshot
     return snapshot_for_period(
@@ -299,9 +299,11 @@ def _is_realtime_like(timeframe: Timeframe) -> bool:
     return timeframe in {Timeframe.realtime, Timeframe.daily, Timeframe.last_trade_day}
 
 
-def _is_stale_realtime(snapshot: Optional[MarketSnapshot], status, settings) -> bool:
+def _is_unusable_realtime(snapshot: Optional[MarketSnapshot], status, settings) -> bool:
     if snapshot is None or not status.is_trade_day:
-        return False
+        return _is_incomplete_closed_snapshot(snapshot, settings)
+    if status.session == "closed":
+        return _is_incomplete_closed_snapshot(snapshot, settings)
     if status.session not in {"morning_trading", "afternoon_trading", "closing_trading", "lunch_break"}:
         return False
     max_age = getattr(settings, "max_realtime_snapshot_age_seconds", None)
@@ -311,3 +313,21 @@ def _is_stale_realtime(snapshot: Optional[MarketSnapshot], status, settings) -> 
     if updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=CN_TZ)
     return (datetime.now(CN_TZ) - updated_at.astimezone(CN_TZ)).total_seconds() > max_age
+
+
+def _is_incomplete_closed_snapshot(snapshot: Optional[MarketSnapshot], settings) -> bool:
+    if snapshot is None:
+        return False
+    min_time = _parse_complete_day_min_time(getattr(settings, "complete_day_min_snapshot_time", "14:50"))
+    updated_at = snapshot.index.updated_at
+    if updated_at.tzinfo is not None:
+        updated_at = updated_at.astimezone(CN_TZ).replace(tzinfo=None)
+    return updated_at.time() < min_time
+
+
+def _parse_complete_day_min_time(value: str) -> time:
+    try:
+        hour, minute = value.split(":", 1)
+        return time(int(hour), int(minute))
+    except Exception:
+        return time(14, 50)

@@ -112,3 +112,47 @@ def test_realtime_snapshot_allows_stale_non_trade_day_data():
     )
 
     assert snapshot is not None
+
+
+def test_closed_trade_day_rejects_incomplete_intraday_snapshot():
+    db = _db()
+    at = datetime(2026, 7, 3, 11, 29, tzinfo=CN_TZ)
+    save_snapshot(db, _snapshot(at), "sample")
+    db.commit()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+
+    snapshot = snapshot_for_timeframe_with_settings(
+        db,
+        status,
+        Settings(data_provider="sample", complete_day_min_snapshot_time="14:50"),
+        Timeframe.realtime,
+    )
+
+    assert snapshot is None
+
+
+def test_closed_trade_day_allows_complete_late_snapshot():
+    db = _db()
+    at = datetime(2026, 7, 3, 14, 55, tzinfo=CN_TZ)
+    save_snapshot(db, _snapshot(at), "sample")
+    db.commit()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+
+    snapshot = snapshot_for_timeframe_with_settings(
+        db,
+        status,
+        Settings(data_provider="sample", complete_day_min_snapshot_time="14:50"),
+        Timeframe.realtime,
+    )
+
+    assert snapshot is not None
