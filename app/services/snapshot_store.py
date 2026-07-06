@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import and_, delete, func, select
@@ -115,7 +115,14 @@ def latest_snapshot(db: Session, status: TradingStatus) -> Optional[MarketSnapsh
     return None
 
 
-def snapshot_for_period(db: Session, status: TradingStatus, start: Optional[datetime], end: Optional[datetime]) -> Optional[MarketSnapshot]:
+def snapshot_for_period(
+    db: Session,
+    status: TradingStatus,
+    start: Optional[datetime],
+    end: Optional[datetime],
+    boundary_tolerance_seconds: Optional[int] = None,
+    max_gap_seconds: Optional[int] = None,
+) -> Optional[MarketSnapshot]:
     trade_date = status.trade_date if status.is_trade_day else status.last_trade_date
     if start is None and end is None:
         return latest_snapshot(db, status)
@@ -126,6 +133,20 @@ def snapshot_for_period(db: Session, status: TradingStatus, start: Optional[date
     if start_snapshot is None:
         return None
     if start_snapshot.index.updated_at == end_snapshot.index.updated_at:
+        return None
+    if boundary_tolerance_seconds is not None:
+        tolerance = timedelta(seconds=boundary_tolerance_seconds)
+        if abs(start_snapshot.index.updated_at - start) > tolerance:
+            return None
+        if abs(end_snapshot.index.updated_at - end) > tolerance:
+            return None
+    if max_gap_seconds is not None and not _has_continuous_index_snapshots(
+        db,
+        trade_date,
+        start_snapshot.index.updated_at,
+        end_snapshot.index.updated_at,
+        max_gap_seconds,
+    ):
         return None
     return diff_snapshots(start_snapshot, end_snapshot)
 
@@ -331,6 +352,29 @@ def _snapshot_at_or_before(
     if not sector_rows or not stock_rows:
         return None
     return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
+
+
+def _has_continuous_index_snapshots(
+    db: Session,
+    trade_date: str,
+    start: datetime,
+    end: datetime,
+    max_gap_seconds: int,
+) -> bool:
+    times = list(
+        db.scalars(
+            select(IndexSnapshot.snapshot_time)
+            .where(
+                IndexSnapshot.trade_date == trade_date,
+                IndexSnapshot.snapshot_time >= start,
+                IndexSnapshot.snapshot_time <= end,
+            )
+            .order_by(IndexSnapshot.snapshot_time.asc())
+        )
+    )
+    if len(times) < 2:
+        return False
+    return all((right - left).total_seconds() <= max_gap_seconds for left, right in zip(times, times[1:]))
 
 
 def _snapshot_from_rows(

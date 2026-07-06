@@ -21,7 +21,7 @@ from app.services.ranking_service import (
     build_board_detail_from_db,
     build_dashboard_from_db,
     rank_query,
-    snapshot_for_timeframe,
+    snapshot_for_timeframe_with_settings,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.snapshot_store import has_snapshots, latest_snapshot
@@ -112,7 +112,7 @@ def periods():
 @app.get("/api/index/shanghai")
 def shanghai_index(settings: Settings = Depends(get_settings), db: Session = Depends(get_db)):
     status = get_trading_status(settings)
-    snapshot = latest_snapshot(db, status)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, Timeframe.realtime)
     if snapshot is None:
         raise HTTPException(status_code=503, detail="行情数据缺失，采集服务繁忙或上游数据源不可用")
     return {
@@ -136,7 +136,7 @@ def shanghai_index(settings: Settings = Depends(get_settings), db: Session = Dep
 @app.get("/api/index")
 def index_quote(settings: Settings = Depends(get_settings), db: Session = Depends(get_db)):
     status = get_trading_status(settings)
-    snapshot = latest_snapshot(db, status)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, Timeframe.realtime)
     if snapshot is None:
         raise HTTPException(status_code=503, detail="行情数据缺失，采集服务繁忙或上游数据源不可用")
     return snapshot.index
@@ -290,7 +290,7 @@ def _rank_response(
         return cached
     try:
         block = rank_query(db, status, settings, period, rank_type, target_type, limit, sector_code=sector_code)
-        snapshot = snapshot_for_timeframe(db, status, period)
+        snapshot = snapshot_for_timeframe_with_settings(db, status, settings, period)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"ranking unavailable: {exc}") from exc
     payload = {

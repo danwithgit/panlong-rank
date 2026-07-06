@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 
 from sqlalchemy import delete, select
@@ -11,6 +12,8 @@ from app.models import BoardQuote, MarketSnapshot, RankingBlock, RankingItem, St
 from app.services.periods import combine_trade_time, period_for
 from app.services.rankings import timeframe_label
 from app.services.snapshot_store import latest_snapshot, snapshot_for_period
+
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 RANK_TYPE_LABELS = {
     "turnover": "成交额",
@@ -27,10 +30,26 @@ TARGET_TYPE_LABELS = {
 
 
 def snapshot_for_timeframe(db: Session, status, timeframe: Timeframe) -> Optional[MarketSnapshot]:
+    return snapshot_for_timeframe_with_settings(db, status, None, timeframe)
+
+
+def snapshot_for_timeframe_with_settings(db: Session, status, settings, timeframe: Timeframe) -> Optional[MarketSnapshot]:
     spec = period_for(timeframe)
     start = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.start)
     end = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.end)
-    return snapshot_for_period(db, status, start, end)
+    if start is None and end is None:
+        snapshot = snapshot_for_period(db, status, start, end)
+        if settings is not None and _is_realtime_like(timeframe) and _is_stale_realtime(snapshot, status, settings):
+            return None
+        return snapshot
+    return snapshot_for_period(
+        db,
+        status,
+        start,
+        end,
+        boundary_tolerance_seconds=getattr(settings, "period_boundary_tolerance_seconds", None),
+        max_gap_seconds=getattr(settings, "max_period_snapshot_gap_seconds", None),
+    )
 
 
 def ensure_snapshot(db: Session, settings, status) -> MarketSnapshot:
@@ -42,9 +61,9 @@ def ensure_snapshot(db: Session, settings, status) -> MarketSnapshot:
 
 def build_dashboard_from_db(db: Session, status, settings, timeframe: Timeframe, limit: int):
     ensure_snapshot(db, settings, status)
-    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, timeframe)
     if snapshot is None:
-        raise RuntimeError("no snapshot available")
+        raise RuntimeError("该时间段真实快照不足或最新数据已过期，暂不展示以免误导")
     board_rankings = build_board_rankings_from_snapshot(snapshot, timeframe, limit)
     leader_rankings = build_leader_rankings_from_snapshot(snapshot, timeframe, limit)
     return snapshot, board_rankings, leader_rankings
@@ -52,9 +71,9 @@ def build_dashboard_from_db(db: Session, status, settings, timeframe: Timeframe,
 
 def build_board_detail_from_db(db: Session, status, settings, timeframe: Timeframe, limit: int, board_code: str):
     ensure_snapshot(db, settings, status)
-    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, timeframe)
     if snapshot is None:
-        raise RuntimeError("no snapshot available")
+        raise RuntimeError("该时间段真实快照不足或最新数据已过期，暂不展示以免误导")
     board = next((item for item in snapshot.boards if item.code == board_code), None)
     if board is None:
         return None, [], snapshot
@@ -73,9 +92,9 @@ def rank_query(
     sector_code: Optional[str] = None,
 ) -> RankingBlock:
     ensure_snapshot(db, settings, status)
-    snapshot = snapshot_for_timeframe(db, status, timeframe)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, timeframe)
     if snapshot is None:
-        raise RuntimeError("no snapshot available")
+        raise RuntimeError("该时间段真实快照不足或最新数据已过期，暂不展示以免误导")
     block = build_single_rank(snapshot, timeframe, rank_type, target_type, limit, sector_code=sector_code)
     return block
 
@@ -274,3 +293,21 @@ def _parse_block_key(key: str) -> tuple[str, str]:
         return "leader_stock", key.replace("leader_stock_", "", 1)
     parts = key.split("_")
     return parts[0], "_".join(parts[1:])
+
+
+def _is_realtime_like(timeframe: Timeframe) -> bool:
+    return timeframe in {Timeframe.realtime, Timeframe.daily, Timeframe.last_trade_day}
+
+
+def _is_stale_realtime(snapshot: Optional[MarketSnapshot], status, settings) -> bool:
+    if snapshot is None or not status.is_trade_day:
+        return False
+    if status.session not in {"morning_trading", "afternoon_trading", "closing_trading", "lunch_break"}:
+        return False
+    max_age = getattr(settings, "max_realtime_snapshot_age_seconds", None)
+    if max_age is None:
+        return False
+    updated_at = snapshot.index.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=CN_TZ)
+    return (datetime.now(CN_TZ) - updated_at.astimezone(CN_TZ)).total_seconds() > max_age

@@ -157,3 +157,51 @@ def test_latest_snapshot_skips_incomplete_newer_batch():
     assert result.index.updated_at == complete_at
     assert result.boards[0].updated_at == complete_at
     assert result.stocks[0].updated_at == complete_at
+
+
+def test_snapshot_for_period_rejects_boundary_snapshot_outside_tolerance():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 9, 40), 100, 1000, 10), "sample")
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 10, 30), 180, 2100, 11), "sample")
+    db.commit()
+
+    result = snapshot_for_period(
+        db,
+        status,
+        datetime(2026, 7, 3, 9, 30),
+        datetime(2026, 7, 3, 10, 30),
+        boundary_tolerance_seconds=300,
+        max_gap_seconds=3600,
+    )
+
+    assert result is None
+
+
+def test_snapshot_for_period_rejects_large_collection_gap():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 9, 30), 100, 1000, 10), "sample")
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 10, 30), 180, 2100, 11), "sample")
+    db.commit()
+
+    result = snapshot_for_period(
+        db,
+        status,
+        datetime(2026, 7, 3, 9, 30),
+        datetime(2026, 7, 3, 10, 30),
+        boundary_tolerance_seconds=300,
+        max_gap_seconds=600,
+    )
+
+    assert result is None
