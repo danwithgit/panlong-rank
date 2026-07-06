@@ -119,6 +119,9 @@ def test_akshare_provider_uses_real_a_spot_leader_when_sina_detail_is_empty():
 
 
 class FakeAkshareWithSinaIndexAndEmBoards(FakeAkshare):
+    def stock_sector_spot(self):
+        raise RuntimeError("sina boards unavailable")
+
     def stock_board_industry_name_em(self):
         return pd.DataFrame(
             [
@@ -167,3 +170,49 @@ def test_akshare_provider_uses_em_stock_detail_for_em_boards_even_when_index_fal
     assert snapshot.stocks[0].code == "002064"
     assert snapshot.stocks[0].board_code == "BK1412"
     assert snapshot.data_source == "akshare_sina+akshare_em"
+
+
+class FakeAkshareWithEmBoardsMissingTurnover(FakeAkshare):
+    def stock_zh_index_spot_em(self):
+        return pd.DataFrame(
+            [
+                {
+                    "代码": "000001",
+                    "名称": "上证指数",
+                    "最新价": 4035.96,
+                    "昨日收盘": 4043.64,
+                    "涨跌幅": -0.19,
+                    "成交量": 384808336,
+                    "成交额": 956462007671.5,
+                }
+            ]
+        )
+
+    def stock_board_industry_name_em(self):
+        return pd.DataFrame(
+            [
+                {
+                    "板块代码": "BK0465",
+                    "板块名称": "化学制药",
+                    "涨跌幅": 1.6,
+                    "总市值": 100000000,
+                    "领涨股票": "罗欣药业",
+                }
+            ]
+        )
+
+
+def test_akshare_provider_prefers_board_source_with_turnover_fields():
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+
+    snapshot = AkshareMarketDataProvider()._snapshot_once(status, ak=FakeAkshareWithEmBoardsMissingTurnover())
+
+    assert snapshot.boards[0].code == "new_cbzz"
+    assert snapshot.boards[0].amount == 8614537882
+    assert snapshot.boards[0].volume == 399973253
+    assert snapshot.data_source == "akshare_em+akshare_sina"

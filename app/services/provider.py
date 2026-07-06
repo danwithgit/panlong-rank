@@ -54,8 +54,8 @@ class AkshareMarketDataProvider(MarketDataProvider):
         boards = self._first_success(
             "board quotes",
             [
-                ("akshare_em", lambda: self._board_quotes_em(ak)),
                 ("akshare_sina", lambda: self._board_quotes_sina(ak)),
+                ("akshare_em", lambda: self._board_quotes_em(ak)),
             ],
             source_parts,
         )
