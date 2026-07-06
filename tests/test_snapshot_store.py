@@ -183,6 +183,31 @@ def test_snapshot_for_period_rejects_boundary_snapshot_outside_tolerance():
     assert result is None
 
 
+def test_snapshot_for_period_accepts_start_snapshot_after_boundary_within_tolerance():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 9, 31), 100, 1000, 10), "sample")
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 10, 29), 180, 2100, 11), "sample")
+    db.commit()
+
+    result = snapshot_for_period(
+        db,
+        status,
+        datetime(2026, 7, 3, 9, 30),
+        datetime(2026, 7, 3, 10, 30),
+        boundary_tolerance_seconds=300,
+        max_gap_seconds=3600,
+    )
+
+    assert result is not None
+    assert result.index.updated_at == datetime(2026, 7, 3, 10, 29)
+
+
 def test_snapshot_for_period_rejects_large_collection_gap():
     db = _db()
     status = TradingStatus(

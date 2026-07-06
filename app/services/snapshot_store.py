@@ -129,7 +129,7 @@ def snapshot_for_period(
     end_snapshot = _snapshot_at_or_before(db, status, trade_date, end)
     if end_snapshot is None:
         return None
-    start_snapshot = _snapshot_at_or_before(db, status, trade_date, start)
+    start_snapshot = _snapshot_at_or_after(db, status, trade_date, start)
     if start_snapshot is None:
         return None
     if start_snapshot.index.updated_at == end_snapshot.index.updated_at:
@@ -348,6 +348,30 @@ def _snapshot_at_or_before(
             .order_by(SectorSnapshot.sector_code)
         )
     )
+    stock_rows = _latest_stock_rows(db, trade_date, snapshot_time)
+    if not sector_rows or not stock_rows:
+        return None
+    return _snapshot_from_rows(index_row, sector_rows, stock_rows, status)
+
+
+def _snapshot_at_or_after(
+    db: Session,
+    status: TradingStatus,
+    trade_date: str,
+    target: Optional[datetime],
+) -> Optional[MarketSnapshot]:
+    if target is None:
+        return latest_snapshot(db, status)
+    index_row = db.scalar(
+        select(IndexSnapshot)
+        .where(IndexSnapshot.trade_date == trade_date, IndexSnapshot.snapshot_time >= target)
+        .order_by(IndexSnapshot.snapshot_time.asc(), IndexSnapshot.id.asc())
+        .limit(1)
+    )
+    if index_row is None:
+        return None
+    snapshot_time = index_row.snapshot_time
+    sector_rows = _sector_rows_at(db, trade_date, snapshot_time)
     stock_rows = _latest_stock_rows(db, trade_date, snapshot_time)
     if not sector_rows or not stock_rows:
         return None
