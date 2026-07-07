@@ -9,6 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.config import Settings
 from app.db.session import SessionLocal
 from app.db.tables import JobLog
+from app.services.backfill import run_backfill_batch, seed_stock_daily_backfill_tasks
 from app.services.calendar import get_trading_status
 from app.services.collector import collect_market_snapshot
 
@@ -29,6 +30,16 @@ def start_scheduler(settings: Settings) -> None:
         replace_existing=True,
         max_instances=1,
     )
+    if settings.backfill_enabled:
+        _scheduler.add_job(
+            _scheduled_backfill,
+            "interval",
+            seconds=settings.backfill_interval_seconds,
+            args=[settings],
+            id="backfill_daily_history",
+            replace_existing=True,
+            max_instances=1,
+        )
     _scheduler.start()
 
 
@@ -78,5 +89,17 @@ def _record_timeout(timeout_seconds: int) -> None:
             )
         )
         db.commit()
+    finally:
+        db.close()
+
+
+def _scheduled_backfill(settings: Settings) -> None:
+    db = SessionLocal()
+    try:
+        seed_stock_daily_backfill_tasks(db, settings)
+        run_backfill_batch(db, settings)
+        db.commit()
+    except Exception:
+        db.rollback()
     finally:
         db.close()

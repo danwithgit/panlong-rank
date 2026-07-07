@@ -125,6 +125,85 @@ class Ranking(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class DailyAggregate(Base):
+    __tablename__ = "daily_aggregates"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "target_type", "target_code", "sector_code", name="uq_daily_target_sector"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
+    target_type: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_code: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sector_code: Mapped[Optional[str]] = mapped_column(String(24), index=True, nullable=True)
+    sector_name: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    open_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    close_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    high_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    low_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    change_percent: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    turnover: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    fund_amount: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    snapshot_time: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    data_source: Mapped[str] = mapped_column(String(40), nullable=False)
+    data_quality: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class WeeklyAggregate(Base):
+    __tablename__ = "weekly_aggregates"
+    __table_args__ = (
+        UniqueConstraint("week_start", "week_end", "target_type", "target_code", "sector_code", name="uq_weekly_target_sector"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    week_start: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
+    week_end: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
+    target_type: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_code: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sector_code: Mapped[Optional[str]] = mapped_column(String(24), index=True, nullable=True)
+    sector_name: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    open_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    close_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    high_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    low_price: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    change_percent: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    turnover: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    fund_amount: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    trading_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    data_source: Mapped[str] = mapped_column(String(40), nullable=False)
+    data_quality: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class BackfillTask(Base):
+    __tablename__ = "backfill_tasks"
+    __table_args__ = (
+        UniqueConstraint("task_type", "target_type", "target_code", "sector_code", "trade_date", name="uq_backfill_task"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_type: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    target_type: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_code: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sector_code: Mapped[Optional[str]] = mapped_column(String(24), index=True, nullable=True)
+    sector_name: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    trade_date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), index=True, default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, index=True, default=datetime.utcnow, nullable=False)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class JobLog(Base):
     __tablename__ = "job_logs"
 

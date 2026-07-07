@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db.tables import JobLog
 from app.models import MarketSnapshot
+from app.services.aggregates import rebuild_daily_aggregate, rebuild_recent_weekly_aggregates, trim_aggregate_history
 from app.services.calendar import get_trading_status
 from app.services.provider import get_provider
 from app.services.snapshot_store import save_snapshot, trim_old_snapshots
@@ -32,7 +33,11 @@ def collect_market_snapshot(db: Session, settings: Settings, force: bool = False
         provider = get_provider(settings)
         snapshot = provider.snapshot(status)
         rows = save_snapshot(db, snapshot, settings.data_provider)
-        trim_old_snapshots(db)
+        trade_date = snapshot.trading_status.last_trade_date if not snapshot.trading_status.is_trade_day else snapshot.trading_status.trade_date
+        rows += rebuild_daily_aggregate(db, trade_date)
+        rows += rebuild_recent_weekly_aggregates(db)
+        trim_old_snapshots(db, keep_trade_dates=settings.snapshot_keep_trade_dates)
+        trim_aggregate_history(db, keep_days=settings.aggregate_keep_trade_days)
         job.status = "success"
         job.rows_count = rows
         job.finished_at = datetime.utcnow()

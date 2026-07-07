@@ -13,9 +13,18 @@ from app.config import Settings, get_settings
 from app.db.session import SessionLocal, get_db, init_db
 from app.db.tables import JobLog
 from app.models import BoardDetailResponse, DashboardResponse, Timeframe
+from app.services.backfill import run_backfill_batch, seed_stock_daily_backfill_tasks
 from app.services.cache import get_cache
 from app.services.calendar import get_trading_status
 from app.services.collector import collect_market_snapshot
+from app.services.history_rankings import (
+    compare_daily,
+    compare_timeframe,
+    daily_rank,
+    recent_daily_options,
+    recent_weekly_options,
+    weekly_rank,
+)
 from app.services.periods import period_for, period_options
 from app.services.ranking_service import (
     build_board_detail_from_db,
@@ -104,9 +113,82 @@ def job_logs(limit: int = Query(default=20, ge=1, le=200), db: Session = Depends
     }
 
 
+@app.post("/api/admin/backfill/run")
+def run_backfill_now(
+    seed: bool = Query(default=True),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    seeded = seed_stock_daily_backfill_tasks(db, settings) if seed else 0
+    result = run_backfill_batch(db, settings)
+    db.commit()
+    return {"seeded": seeded, **result}
+
+
 @app.get("/api/periods")
 def periods():
     return {"items": period_options()}
+
+
+@app.get("/api/history/days")
+def history_days(limit: int = Query(default=7, ge=1, le=30), db: Session = Depends(get_db)):
+    return {"items": recent_daily_options(db, limit)}
+
+
+@app.get("/api/history/weeks")
+def history_weeks(limit: int = Query(default=4, ge=1, le=12), db: Session = Depends(get_db)):
+    return {"items": recent_weekly_options(db, limit)}
+
+
+@app.get("/api/history/daily-rank")
+def history_daily_rank(
+    trade_date: Optional[str] = None,
+    target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
+    metric: str = Query(default="turnover", pattern="^(turnover|volume|fund|change)$"),
+    sector_code: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return daily_rank(db, trade_date, target_type, metric, limit, sector_code=sector_code)
+
+
+@app.get("/api/history/weekly-rank")
+def history_weekly_rank(
+    week_start: Optional[str] = None,
+    week_end: Optional[str] = None,
+    target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
+    metric: str = Query(default="turnover", pattern="^(turnover|volume|fund|change)$"),
+    sector_code: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return weekly_rank(db, week_start, week_end, target_type, metric, limit, sector_code=sector_code)
+
+
+@app.get("/api/history/compare")
+def history_compare(
+    target_type: str = Query(..., pattern="^(sector|stock|index)$"),
+    target_code: str = Query(...),
+    trade_date: Optional[str] = None,
+    sector_code: Optional[str] = None,
+    days: int = Query(default=3, ge=2, le=7),
+    db: Session = Depends(get_db),
+):
+    return compare_daily(db, target_type, target_code, trade_date, sector_code=sector_code, days=days)
+
+
+@app.get("/api/history/timeframe-rank")
+def history_timeframe_rank(
+    timeframe: Timeframe = Timeframe.realtime,
+    target_type: str = Query(default="sector", pattern="^(sector|stock|leader_stock)$"),
+    metric: str = Query(default="turnover", pattern="^(turnover|volume|fund|change)$"),
+    sector_code: Optional[str] = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    status = get_trading_status(settings)
+    return compare_timeframe(db, status, settings, timeframe, target_type, metric, limit, sector_code=sector_code)
 
 
 @app.get("/api/index/shanghai")

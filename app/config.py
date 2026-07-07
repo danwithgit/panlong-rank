@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     max_period_snapshot_gap_seconds: int = 600
     complete_day_min_snapshot_time: str = "14:50"
     use_sample_when_provider_fails: bool = False
+    snapshot_keep_trade_dates: int = 30
+    aggregate_keep_trade_days: int = 30
+    backfill_enabled: bool = True
+    backfill_interval_seconds: int = 300
+    backfill_batch_size: int = 3
+    backfill_max_attempts: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
