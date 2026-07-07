@@ -26,6 +26,9 @@ class SampleMarketDataProvider(MarketDataProvider):
 
 
 class AkshareMarketDataProvider(MarketDataProvider):
+    def __init__(self, sina_detail_board_limit: int = 16) -> None:
+        self.sina_detail_board_limit = max(1, sina_detail_board_limit)
+
     def snapshot(self, trading_status: TradingStatus) -> MarketSnapshot:
         last_error = None
         for attempt in range(1, 4):
@@ -215,7 +218,7 @@ class AkshareMarketDataProvider(MarketDataProvider):
 
     def _stock_quotes_sina(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
         now = datetime.now(CN_TZ)
-        selected_boards = boards[:49]
+        selected_boards = sorted(boards, key=lambda board: board.amount, reverse=True)[: self.sina_detail_board_limit]
         return self._sina_sector_detail_quotes(ak, selected_boards, now)
 
     def _sina_sector_detail_quotes(
@@ -255,7 +258,7 @@ def get_provider(settings: Settings) -> MarketDataProvider:
     if provider == "sample":
         return SampleMarketDataProvider()
     if provider in {"auto", "akshare"}:
-        return AkshareMarketDataProvider()
+        return AkshareMarketDataProvider(sina_detail_board_limit=settings.sina_detail_board_limit)
     raise ValueError(f"Unsupported DATA_PROVIDER: {settings.data_provider}")
 
 

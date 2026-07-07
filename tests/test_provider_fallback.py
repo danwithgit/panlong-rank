@@ -143,6 +143,64 @@ def test_akshare_provider_derives_sina_leader_from_sector_detail_not_sector_spot
     assert all(stock.board_code == "new_jdly" for stock in snapshot.stocks)
 
 
+class FakeAkshareWithManySinaBoards(FakeAkshare):
+    def __init__(self):
+        self.detail_calls: list[str] = []
+
+    def stock_sector_spot(self):
+        return pd.DataFrame(
+            [
+                {
+                    "label": "new_low",
+                    "板块": "低成交板块",
+                    "涨跌幅": 1,
+                    "总成交量": 100,
+                    "总成交额": 1000,
+                },
+                {
+                    "label": "new_high",
+                    "板块": "高成交板块",
+                    "涨跌幅": 2,
+                    "总成交量": 200,
+                    "总成交额": 9999,
+                },
+            ]
+        )
+
+    def stock_sector_detail(self, sector):
+        self.detail_calls.append(sector)
+        return pd.DataFrame(
+            [
+                {
+                    "code": "600001",
+                    "name": "核心股票",
+                    "trade": 10,
+                    "changepercent": 3,
+                    "volume": 1000,
+                    "amount": 2000,
+                }
+            ]
+        )
+
+
+def test_akshare_provider_limits_sina_detail_to_high_turnover_boards():
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+    ak = FakeAkshareWithManySinaBoards()
+
+    snapshot = AkshareMarketDataProvider(sina_detail_board_limit=1)._snapshot_once(status, ak=ak)
+
+    assert ak.detail_calls == ["new_high"]
+    assert len(snapshot.boards) == 2
+    assert snapshot.boards[0].leader_stock_code is None
+    assert snapshot.boards[1].leader_stock_code == "600001"
+    assert snapshot.stocks[0].board_code == "new_high"
+
+
 class FakeAkshareWithSinaIndexAndEmBoards(FakeAkshare):
     def stock_sector_spot(self):
         raise RuntimeError("sina boards unavailable")
