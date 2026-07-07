@@ -115,6 +115,7 @@ def rebuild_daily_aggregate(db: Session, trade_date: str, data_quality: str = QU
 
 
 def rebuild_recent_weekly_aggregates(db: Session, max_weeks: int = 4) -> int:
+    db.flush()
     dates = recent_trade_dates(db, max_weeks * 5)
     if not dates:
         return 0

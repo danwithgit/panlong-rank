@@ -116,3 +116,14 @@ def test_rebuild_daily_replaces_existing_rows():
 
     rows = db.scalars(select(DailyAggregate).where(DailyAggregate.trade_date == "2026-07-01")).all()
     assert len(rows) == 3
+
+
+def test_recent_weekly_rebuild_sees_uncommitted_daily_rows():
+    db = _db()
+    _seed_snapshot(db, "2026-07-01", 0, 1000, 100)
+
+    rebuild_daily_aggregate(db, "2026-07-01")
+    rows = rebuild_recent_weekly_aggregates(db)
+
+    assert rows == 3
+    assert db.scalar(select(WeeklyAggregate.id)) is not None
