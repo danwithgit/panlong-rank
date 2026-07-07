@@ -171,7 +171,6 @@ class AkshareMarketDataProvider(MarketDataProvider):
             code = str(_value(row, ["label", "代码"], ""))
             name = str(_value(row, ["板块", "name"], ""))
             amount = _num(row, ["总成交额", "成交额", "amount"])
-            leader_code = _normalize_code(str(_value(row, ["股票代码", "leader_code"], "")))
             boards.append(
                 BoardQuote(
                     code=code,
@@ -180,8 +179,8 @@ class AkshareMarketDataProvider(MarketDataProvider):
                     volume=_num(row, ["总成交量", "成交量", "volume"]),
                     amount=amount,
                     capital_flow=amount,
-                    leader_stock_code=leader_code or None,
-                    leader_stock_name=str(_value(row, ["股票名称", "leader_name"], "")) or None,
+                    leader_stock_code=None,
+                    leader_stock_name=None,
                     updated_at=now,
                 )
             )
@@ -216,107 +215,39 @@ class AkshareMarketDataProvider(MarketDataProvider):
 
     def _stock_quotes_sina(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
         now = datetime.now(CN_TZ)
-        stocks: list[StockQuote] = []
         selected_boards = boards[:49]
-        stocks.extend(self._leader_stock_quotes_from_a_spot(ak, selected_boards, now, stocks))
-        if len(stocks) < max(10, len(selected_boards) // 2):
-            stocks.extend(self._sina_sector_detail_quotes(ak, selected_boards, now, stocks))
-        return stocks
+        return self._sina_sector_detail_quotes(ak, selected_boards, now)
 
     def _sina_sector_detail_quotes(
         self,
         ak,
         boards: list[BoardQuote],
         now: datetime,
-        existing: list[StockQuote],
     ) -> list[StockQuote]:
-        seen = {(stock.board_code, stock.code) for stock in existing}
+        seen: set[tuple[str, str]] = set()
         stocks: list[StockQuote] = []
-        for board in boards[:10]:
+        for board in boards:
             try:
                 df = ak.stock_sector_detail(sector=board.code)
             except Exception as exc:
                 logger.warning("AKShare Sina board detail failed for %s %s: %s", board.code, board.name, exc)
                 continue
-            for _, row in df.head(10).iterrows():
-                amount = _num(row, ["amount", "成交额"])
-                code = _normalize_code(str(_value(row, ["code", "代码", "symbol"], "")))
-                if not code or (board.code, code) in seen:
+            candidates = _stock_quotes_from_sector_detail(df, board, now)
+            if not candidates:
+                continue
+
+            leader = max(candidates, key=lambda stock: (stock.change_percent, stock.amount))
+            board.leader_stock_code = leader.code
+            board.leader_stock_name = leader.name
+
+            ranked = _merge_ranked_stocks(candidates, amount_limit=8, change_limit=5)
+            for stock in ranked:
+                key = (stock.board_code, stock.code)
+                if key in seen:
                     continue
-                stocks.append(
-                    StockQuote(
-                        code=code,
-                        name=str(_value(row, ["name", "名称"], "")),
-                        board_code=board.code,
-                        board_name=board.name,
-                        price=_num(row, ["trade", "最新价", "price"]),
-                        change_percent=_num(row, ["changepercent", "涨跌幅"]),
-                        volume=_num(row, ["volume", "成交量"]),
-                        amount=amount,
-                        capital_flow=amount,
-                        updated_at=now,
-                    )
-                )
-                seen.add((board.code, code))
+                stocks.append(stock)
+                seen.add(key)
         return [stock for stock in stocks if stock.code and stock.name]
-
-    def _leader_stock_quotes_from_a_spot(
-        self,
-        ak,
-        boards: list[BoardQuote],
-        now: datetime,
-        existing: list[StockQuote],
-    ) -> list[StockQuote]:
-        try:
-            df = ak.stock_zh_a_spot()
-        except Exception as exc:
-            logger.warning("AKShare Sina leader stock fallback failed: %s", exc)
-            return []
-        if df.empty:
-            return []
-
-        rows_by_code = {}
-        rows_by_name = {}
-        for _, row in df.iterrows():
-            code = _normalize_code(str(_value(row, ["代码", "code", "symbol"], "")))
-            name = str(_value(row, ["名称", "name"], ""))
-            if code:
-                rows_by_code[code] = row
-            if name:
-                rows_by_name[name] = row
-
-        seen = {(stock.board_code, stock.code) for stock in existing}
-        additions: list[StockQuote] = []
-        for board in boards:
-            leader_code = _normalize_code(board.leader_stock_code or "")
-            row = rows_by_code.get(leader_code)
-            if row is None and board.leader_stock_name:
-                row = rows_by_name.get(board.leader_stock_name)
-            if row is None:
-                continue
-
-            code = _normalize_code(str(_value(row, ["代码", "code", "symbol"], leader_code)))
-            name = str(_value(row, ["名称", "name"], board.leader_stock_name or ""))
-            if not code or not name or (board.code, code) in seen:
-                continue
-
-            amount = _num(row, ["成交额", "amount"])
-            additions.append(
-                StockQuote(
-                    code=code,
-                    name=name,
-                    board_code=board.code,
-                    board_name=board.name,
-                    price=_num(row, ["最新价", "trade", "price"]),
-                    change_percent=_num(row, ["涨跌幅", "changepercent"]),
-                    volume=_num(row, ["成交量", "volume"]),
-                    amount=amount,
-                    capital_flow=amount,
-                    updated_at=now,
-                )
-            )
-            seen.add((board.code, code))
-        return additions
 
 
 def get_provider(settings: Settings) -> MarketDataProvider:
@@ -326,6 +257,47 @@ def get_provider(settings: Settings) -> MarketDataProvider:
     if provider in {"auto", "akshare"}:
         return AkshareMarketDataProvider()
     raise ValueError(f"Unsupported DATA_PROVIDER: {settings.data_provider}")
+
+
+def _stock_quotes_from_sector_detail(df: pd.DataFrame, board: BoardQuote, now: datetime) -> list[StockQuote]:
+    stocks: list[StockQuote] = []
+    for _, row in df.iterrows():
+        code = _normalize_code(str(_value(row, ["code", "代码", "symbol"], "")))
+        name = str(_value(row, ["name", "名称"], ""))
+        if not code or not name:
+            continue
+        amount = _num(row, ["amount", "成交额"])
+        stocks.append(
+            StockQuote(
+                code=code,
+                name=name,
+                board_code=board.code,
+                board_name=board.name,
+                price=_num(row, ["trade", "最新价", "price"]),
+                change_percent=_num(row, ["changepercent", "涨跌幅"]),
+                volume=_num(row, ["volume", "成交量"]),
+                amount=amount,
+                capital_flow=amount,
+                updated_at=now,
+            )
+        )
+    return stocks
+
+
+def _merge_ranked_stocks(stocks: list[StockQuote], amount_limit: int, change_limit: int) -> list[StockQuote]:
+    ranked: list[StockQuote] = []
+    seen: set[str] = set()
+    groups = [
+        sorted(stocks, key=lambda stock: stock.amount, reverse=True)[:amount_limit],
+        sorted(stocks, key=lambda stock: stock.change_percent, reverse=True)[:change_limit],
+    ]
+    for group in groups:
+        for stock in group:
+            if stock.code in seen:
+                continue
+            ranked.append(stock)
+            seen.add(stock.code)
+    return ranked
 
 
 def _find_row(df: pd.DataFrame, columns: list[str], expected: str):

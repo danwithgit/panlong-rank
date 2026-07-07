@@ -60,18 +60,7 @@ class FakeAkshare:
         )
 
     def stock_zh_a_spot(self):
-        return pd.DataFrame(
-            [
-                {
-                    "代码": "sh600150",
-                    "名称": "中国船舶",
-                    "最新价": 37.18,
-                    "涨跌幅": 8.21,
-                    "成交量": 188201453,
-                    "成交额": 6838128407,
-                }
-            ]
-        )
+        raise AssertionError("Sina full A-share spot is too slow for overseas production collection")
 
 
 def test_akshare_provider_falls_back_to_sina_sources():
@@ -88,32 +77,56 @@ def test_akshare_provider_falls_back_to_sina_sources():
     assert snapshot.index.code == "000001"
     assert snapshot.boards[0].code == "new_cbzz"
     assert snapshot.boards[0].leader_stock_code == "600150"
+    assert snapshot.boards[0].leader_stock_name == "中国船舶"
     assert snapshot.stocks[0].name == "中国船舶"
     assert snapshot.stocks[0].board_code == "new_cbzz"
     assert snapshot.data_source == "akshare_sina"
 
 
-class FakeAkshareWithEmptySinaDetail(FakeAkshare):
-    def stock_sector_detail(self, sector):
-        assert sector == "new_cbzz"
-        return pd.DataFrame()
-
-    def stock_zh_a_spot(self):
+class FakeAkshareWithWrongSinaLeader(FakeAkshare):
+    def stock_sector_spot(self):
         return pd.DataFrame(
             [
                 {
-                    "代码": "sh600150",
-                    "名称": "中国船舶",
-                    "最新价": 37.18,
-                    "涨跌幅": 8.21,
-                    "成交量": 188201453,
-                    "成交额": 6838128407,
+                    "label": "new_jdly",
+                    "板块": "酒店旅游",
+                    "涨跌幅": -2.9,
+                    "总成交量": 499816999,
+                    "总成交额": 9328295682,
+                    "股票代码": "sz002558",
+                    "股票名称": "巨人网络",
                 }
             ]
         )
 
+    def stock_sector_detail(self, sector):
+        assert sector == "new_jdly"
+        return pd.DataFrame(
+            [
+                {
+                    "code": "600258",
+                    "name": "首旅酒店",
+                    "trade": 11.61,
+                    "changepercent": -2.025,
+                    "volume": 13289860,
+                    "amount": 154280498,
+                },
+                {
+                    "code": "600358",
+                    "name": "国旅联合",
+                    "trade": 5.42,
+                    "changepercent": 0.931,
+                    "volume": 6050310,
+                    "amount": 32952161,
+                },
+            ]
+        )
 
-def test_akshare_provider_uses_real_a_spot_leader_when_sina_detail_is_empty():
+    def stock_zh_a_spot(self):
+        raise AssertionError("Sina full A-share spot should not be used")
+
+
+def test_akshare_provider_derives_sina_leader_from_sector_detail_not_sector_spot():
     status = TradingStatus(
         is_trade_day=True,
         trade_date="2026-07-03",
@@ -121,12 +134,13 @@ def test_akshare_provider_uses_real_a_spot_leader_when_sina_detail_is_empty():
         session="closed",
     )
 
-    snapshot = AkshareMarketDataProvider()._snapshot_once(status, ak=FakeAkshareWithEmptySinaDetail())
+    snapshot = AkshareMarketDataProvider()._snapshot_once(status, ak=FakeAkshareWithWrongSinaLeader())
 
-    assert snapshot.stocks[0].code == "600150"
-    assert snapshot.stocks[0].name == "中国船舶"
-    assert snapshot.stocks[0].board_code == "new_cbzz"
-    assert snapshot.stocks[0].amount == 6838128407
+    assert snapshot.boards[0].code == "new_jdly"
+    assert snapshot.boards[0].leader_stock_code == "600358"
+    assert snapshot.boards[0].leader_stock_name == "国旅联合"
+    assert {stock.code for stock in snapshot.stocks} == {"600258", "600358"}
+    assert all(stock.board_code == "new_jdly" for stock in snapshot.stocks)
 
 
 class FakeAkshareWithSinaIndexAndEmBoards(FakeAkshare):
