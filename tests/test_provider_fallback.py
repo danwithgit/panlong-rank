@@ -60,7 +60,18 @@ class FakeAkshare:
         )
 
     def stock_zh_a_spot(self):
-        raise AssertionError("stock_zh_a_spot should not be needed when sector detail is available")
+        return pd.DataFrame(
+            [
+                {
+                    "代码": "sh600150",
+                    "名称": "中国船舶",
+                    "最新价": 37.18,
+                    "涨跌幅": 8.21,
+                    "成交量": 188201453,
+                    "成交额": 6838128407,
+                }
+            ]
+        )
 
 
 def test_akshare_provider_falls_back_to_sina_sources():

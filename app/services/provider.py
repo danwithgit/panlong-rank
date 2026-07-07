@@ -217,16 +217,32 @@ class AkshareMarketDataProvider(MarketDataProvider):
     def _stock_quotes_sina(self, ak, boards: list[BoardQuote]) -> list[StockQuote]:
         now = datetime.now(CN_TZ)
         stocks: list[StockQuote] = []
-        selected_boards = boards[:30]
-        for board in selected_boards:
+        selected_boards = boards[:49]
+        stocks.extend(self._leader_stock_quotes_from_a_spot(ak, selected_boards, now, stocks))
+        if len(stocks) < max(10, len(selected_boards) // 2):
+            stocks.extend(self._sina_sector_detail_quotes(ak, selected_boards, now, stocks))
+        return stocks
+
+    def _sina_sector_detail_quotes(
+        self,
+        ak,
+        boards: list[BoardQuote],
+        now: datetime,
+        existing: list[StockQuote],
+    ) -> list[StockQuote]:
+        seen = {(stock.board_code, stock.code) for stock in existing}
+        stocks: list[StockQuote] = []
+        for board in boards[:10]:
             try:
                 df = ak.stock_sector_detail(sector=board.code)
             except Exception as exc:
                 logger.warning("AKShare Sina board detail failed for %s %s: %s", board.code, board.name, exc)
                 continue
-            for _, row in df.head(30).iterrows():
+            for _, row in df.head(10).iterrows():
                 amount = _num(row, ["amount", "成交额"])
                 code = _normalize_code(str(_value(row, ["code", "代码", "symbol"], "")))
+                if not code or (board.code, code) in seen:
+                    continue
                 stocks.append(
                     StockQuote(
                         code=code,
@@ -241,16 +257,8 @@ class AkshareMarketDataProvider(MarketDataProvider):
                         updated_at=now,
                     )
                 )
-        stocks = [s for s in stocks if s.code and s.name]
-        boards_with_stocks = {stock.board_code for stock in stocks}
-        missing_boards = [
-            board
-            for board in selected_boards
-            if board.code not in boards_with_stocks and (board.leader_stock_code or board.leader_stock_name)
-        ]
-        if missing_boards:
-            stocks.extend(self._leader_stock_quotes_from_a_spot(ak, missing_boards, now, stocks))
-        return stocks
+                seen.add((board.code, code))
+        return [stock for stock in stocks if stock.code and stock.name]
 
     def _leader_stock_quotes_from_a_spot(
         self,

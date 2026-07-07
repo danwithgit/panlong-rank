@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+from multiprocessing import Process
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import Settings
 from app.db.session import SessionLocal
+from app.db.tables import JobLog
 from app.services.calendar import get_trading_status
 from app.services.collector import collect_market_snapshot
 
@@ -40,10 +43,40 @@ def _scheduled_collect(settings: Settings) -> None:
     status = get_trading_status(settings)
     if not status.is_trade_day or status.session in {"pre_open", "closed"}:
         return
+    timeout = max(30, settings.collect_timeout_seconds)
+    process = Process(target=_collect_in_child, args=[settings])
+    process.start()
+    process.join(timeout)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        _record_timeout(timeout)
+
+
+def _collect_in_child(settings: Settings) -> None:
     db = SessionLocal()
     try:
         collect_market_snapshot(db, settings, force=False)
     except Exception:
         pass
+    finally:
+        db.close()
+
+
+def _record_timeout(timeout_seconds: int) -> None:
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        db.add(
+            JobLog(
+                job_name="collect_market_snapshot",
+                status="failed",
+                started_at=now,
+                finished_at=now,
+                error_message=f"collection timed out after {timeout_seconds} seconds",
+                rows_count=0,
+            )
+        )
+        db.commit()
     finally:
         db.close()
