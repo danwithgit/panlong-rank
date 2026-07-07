@@ -27,6 +27,8 @@ def seed_stock_daily_backfill_tasks(db: Session, settings: Settings) -> int:
     )
     created = 0
     for mapping in mappings:
+        if not _is_supported_stock_code(mapping.stock_code):
+            continue
         for trade_date in dates:
             if _has_daily_stock(db, mapping.stock_code, mapping.sector_code, trade_date):
                 continue
@@ -55,6 +57,7 @@ def seed_stock_daily_backfill_tasks(db: Session, settings: Settings) -> int:
                 )
             )
             created += 1
+    db.flush()
     return created
 
 
@@ -77,6 +80,11 @@ def run_backfill_batch(db: Session, settings: Settings) -> dict:
     processed = succeeded = failed = 0
     for task in tasks:
         processed += 1
+        if task.target_type == "stock" and not _is_supported_stock_code(task.target_code):
+            task.status = "skipped"
+            task.last_error = "unsupported stock code for A-share history backfill"
+            db.commit()
+            continue
         try:
             _run_task(db, task)
             task.status = "success"
@@ -185,6 +193,11 @@ def _recent_calendar_dates(days: int) -> list[str]:
             dates.append(current.isoformat())
         current -= timedelta(days=1)
     return dates
+
+
+def _is_supported_stock_code(code: str) -> bool:
+    normalized = code.strip()
+    return normalized.startswith(("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689", "8", "4"))
 
 
 def _num(row, columns: list[str]) -> float:
