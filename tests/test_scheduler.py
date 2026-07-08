@@ -63,6 +63,7 @@ def test_record_timeout_marks_running_job_failed(monkeypatch):
     db = session_factory()
     try:
         db.add(JobLog(job_name="collect_market_snapshot", status="running", started_at=datetime(2026, 7, 8, 6, 47, 24)))
+        db.add(JobLog(job_name="collect_market_snapshot", status="running", started_at=datetime(2026, 7, 8, 6, 48, 24)))
         db.commit()
     finally:
         db.close()
@@ -72,9 +73,9 @@ def test_record_timeout_marks_running_job_failed(monkeypatch):
     db = session_factory()
     try:
         rows = db.scalars(select(JobLog)).all()
-        assert len(rows) == 1
-        assert rows[0].status == "failed"
-        assert "timed out" in rows[0].error_message
+        assert len(rows) == 2
+        assert {row.status for row in rows} == {"failed"}
+        assert all("timed out" in row.error_message for row in rows)
     finally:
         db.close()
 

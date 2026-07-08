@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime
 import logging
+import signal
 import time
 from zoneinfo import ZoneInfo
 
@@ -271,15 +271,22 @@ def get_provider(settings: Settings) -> MarketDataProvider:
 
 
 def _call_with_timeout(loader, timeout_seconds: int):
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(loader)
+    if not hasattr(signal, "SIGALRM"):
+        return loader()
+
+    def _raise_timeout(signum, frame):
+        raise TimeoutError
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    signal.signal(signal.SIGALRM, _raise_timeout)
     try:
-        return future.result(timeout=timeout_seconds)
+        return loader()
     except TimeoutError as exc:
-        future.cancel()
         raise RuntimeError(f"provider call timed out after {timeout_seconds} seconds") from exc
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        signal.setitimer(signal.ITIMER_REAL, previous_timer[0], previous_timer[1])
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _stock_quotes_from_sector_detail(df: pd.DataFrame, board: BoardQuote, now: datetime) -> list[StockQuote]:
