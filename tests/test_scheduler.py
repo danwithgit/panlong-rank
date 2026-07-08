@@ -76,6 +76,9 @@ def test_scheduler_runs_jobs_immediately(monkeypatch):
 
     try:
         assert len(added_jobs) == 2
-        assert all(item[2].get("next_run_time") is not None for item in added_jobs)
+        collect_job = next(item for item in added_jobs if item[2]["id"] == "collect_market_snapshot")
+        backfill_job = next(item for item in added_jobs if item[2]["id"] == "backfill_daily_history")
+        assert collect_job[2].get("next_run_time") is not None
+        assert backfill_job[2]["next_run_time"] > collect_job[2]["next_run_time"]
     finally:
         scheduler.stop_scheduler()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from multiprocessing import Process
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -42,7 +42,7 @@ def start_scheduler(settings: Settings) -> None:
             id="backfill_daily_history",
             replace_existing=True,
             max_instances=1,
-            next_run_time=datetime.now(CN_TZ),
+            next_run_time=datetime.now(CN_TZ) + timedelta(seconds=min(120, settings.backfill_interval_seconds)),
         )
     _scheduler.start()
 
@@ -101,6 +101,7 @@ def _scheduled_backfill(settings: Settings) -> None:
     db = SessionLocal()
     try:
         seed_stock_daily_backfill_tasks(db, settings)
+        db.commit()
         run_backfill_batch(db, settings)
         db.commit()
     except Exception:
