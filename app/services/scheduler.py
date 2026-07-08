@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from multiprocessing import Process
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -14,6 +15,7 @@ from app.services.calendar import get_trading_status
 from app.services.collector import collect_market_snapshot
 
 _scheduler: Optional[BackgroundScheduler] = None
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def start_scheduler(settings: Settings) -> None:
@@ -29,6 +31,7 @@ def start_scheduler(settings: Settings) -> None:
         id="collect_market_snapshot",
         replace_existing=True,
         max_instances=1,
+        next_run_time=datetime.now(CN_TZ),
     )
     if settings.backfill_enabled:
         _scheduler.add_job(
@@ -39,6 +42,7 @@ def start_scheduler(settings: Settings) -> None:
             id="backfill_daily_history",
             replace_existing=True,
             max_instances=1,
+            next_run_time=datetime.now(CN_TZ),
         )
     _scheduler.start()
 

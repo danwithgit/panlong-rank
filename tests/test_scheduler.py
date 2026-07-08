@@ -51,3 +51,31 @@ def test_scheduled_collect_records_timeout(monkeypatch):
         assert "timed out" in row.error_message
     finally:
         db.close()
+
+
+def test_scheduler_runs_jobs_immediately(monkeypatch):
+    scheduler.stop_scheduler()
+    added_jobs = []
+
+    class FakeScheduler:
+        def __init__(self, timezone):
+            self.timezone = timezone
+
+        def add_job(self, func, trigger, **kwargs):
+            added_jobs.append((func, trigger, kwargs))
+
+        def start(self):
+            pass
+
+        def shutdown(self, wait=False):
+            pass
+
+    monkeypatch.setattr(scheduler, "BackgroundScheduler", FakeScheduler)
+
+    scheduler.start_scheduler(Settings(scheduler_enabled=True, backfill_enabled=True))
+
+    try:
+        assert len(added_jobs) == 2
+        assert all(item[2].get("next_run_time") is not None for item in added_jobs)
+    finally:
+        scheduler.stop_scheduler()
