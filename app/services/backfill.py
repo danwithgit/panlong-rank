@@ -204,20 +204,14 @@ def _backfill_index_daily(db: Session, task: BackfillTask) -> None:
 def _backfill_stock_daily(db: Session, task: BackfillTask) -> None:
     import akshare as ak
 
-    trade_key = task.trade_date.replace("-", "")
-    df = ak.stock_zh_a_hist(
-        symbol=task.target_code,
-        period="daily",
-        start_date=trade_key,
-        end_date=trade_key,
-        adjust="",
-        timeout=12,
-    )
+    df, data_source = _stock_daily_history(ak, task.target_code, task.trade_date)
     if df.empty:
         if not _is_likely_trade_date(task.trade_date):
             return
         raise RuntimeError("empty daily history")
-    row = df.iloc[-1]
+    row = _row_for_date(df, task.trade_date)
+    if row is None:
+        row = df.iloc[-1]
     values = {
         "target_name": task.target_name,
         "sector_code": task.sector_code,
@@ -228,10 +222,10 @@ def _backfill_stock_daily(db: Session, task: BackfillTask) -> None:
         "low_price": _num(row, ["最低", "low"]),
         "change_percent": _num(row, ["涨跌幅", "change_percent"]),
         "volume": _num(row, ["成交量", "volume"]),
-        "turnover": _num(row, ["成交额", "turnover"]),
-        "fund_amount": _num(row, ["成交额", "turnover"]),
+        "turnover": _num(row, ["成交额", "turnover", "amount"]),
+        "fund_amount": _num(row, ["成交额", "turnover", "amount"]),
         "snapshot_time": datetime.strptime(task.trade_date + " 15:00:00", "%Y-%m-%d %H:%M:%S"),
-        "data_source": "akshare_hist",
+        "data_source": data_source,
         "data_quality": QUALITY_BACKFILLED,
     }
     _upsert_daily_aggregate(
@@ -242,6 +236,64 @@ def _backfill_stock_daily(db: Session, task: BackfillTask) -> None:
         sector_code=task.sector_code,
         values=values,
     )
+
+
+def _stock_daily_history(ak, stock_code: str, trade_date: str):
+    trade_key = trade_date.replace("-", "")
+    symbol = _market_symbol(stock_code)
+    errors: list[str] = []
+    candidates = [
+        (
+            "akshare_hist_em",
+            lambda: ak.stock_zh_a_hist(
+                symbol=stock_code,
+                period="daily",
+                start_date=trade_key,
+                end_date=trade_key,
+                adjust="",
+                timeout=12,
+            ),
+        ),
+        (
+            "akshare_hist_sina",
+            lambda: ak.stock_zh_a_daily(
+                symbol=symbol,
+                start_date=trade_key,
+                end_date=trade_key,
+                adjust="",
+            ),
+        ),
+        (
+            "akshare_hist_tx",
+            lambda: ak.stock_zh_a_hist_tx(
+                symbol=symbol,
+                start_date=trade_key,
+                end_date=trade_key,
+                adjust="",
+                timeout=12,
+            ),
+        ),
+    ]
+    for source, loader in candidates:
+        try:
+            df = loader()
+            if df is None or df.empty:
+                raise RuntimeError("empty daily history")
+            return df, source
+        except Exception as exc:
+            errors.append(f"{source}: {exc}")
+    raise RuntimeError(f"All stock history providers failed: {'; '.join(errors)}")
+
+
+def _market_symbol(stock_code: str) -> str:
+    code = stock_code.strip()
+    if code.startswith(("600", "601", "603", "605", "688", "689")):
+        return f"sh{code}"
+    if code.startswith(("000", "001", "002", "003", "300", "301")):
+        return f"sz{code}"
+    if code.startswith(("8", "4")):
+        return f"bj{code}"
+    return code
 
 
 def _has_daily_stock(db: Session, stock_code: str, sector_code: str, trade_date: str) -> bool:

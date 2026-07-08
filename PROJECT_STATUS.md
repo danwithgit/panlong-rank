@@ -155,12 +155,28 @@ push2ipv6.trafficmanager.cn A 14.103.191.91
 当前 provider 已使用以下降级链路：
 
 ```text
-上证指数: stock_zh_index_spot_em -> stock_zh_index_spot_sina
+上证指数: stock_zh_index_spot_sina -> stock_zh_index_spot_em
 板块排行: stock_board_industry_name_em -> stock_sector_spot
 板块内股票: stock_board_industry_cons_em -> stock_sector_detail
+个股日线回补: stock_zh_a_hist -> stock_zh_a_daily -> stock_zh_a_hist_tx
 ```
 
 当指数或板块已经降级到 Sina 时，板块内股票会直接使用 Sina 接口，避免继续请求已知失败的 Eastmoney 成分股接口。
+
+2026-07-08 使用本机 `127.0.0.1:10808` 代理模拟海外出口测试：
+
+```text
+Eastmoney stock_zh_index_spot_em: 1/3 成功，失败为远端断开
+Sina stock_zh_index_spot_sina: 3/3 成功
+Sina stock_sector_spot: 3/3 成功
+Sina stock_sector_detail: 3/3 成功
+Sina stock_zh_index_daily: 3/3 成功
+Eastmoney stock_zh_a_hist: 1/3 成功，失败为远端断开
+Sina stock_zh_a_daily: 3/3 成功
+Tencent stock_zh_a_hist_tx: 3/3 成功
+```
+
+因此实时指数已改为 Sina 优先，避免每次采集先卡在 Eastmoney `push2`。个股历史回补保留 Eastmoney 为第一候选，但失败后会自动尝试 Sina 和 Tencent，成功写入时 `data_source` 分别记录为 `akshare_hist_em`、`akshare_hist_sina` 或 `akshare_hist_tx`。
 
 注意：Sina fallback 没有东方财富主力资金流字段，当前资金量字段用成交额作为排序指标，不能当作真实主力净流入。
 

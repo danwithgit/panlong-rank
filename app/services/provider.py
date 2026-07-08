@@ -49,8 +49,8 @@ class AkshareMarketDataProvider(MarketDataProvider):
         index = self._first_success(
             "index quote",
             [
-                ("akshare_em", lambda: self._index_quote_em(ak, trading_status)),
                 ("akshare_sina", lambda: self._index_quote_sina(ak, trading_status)),
+                ("akshare_em", lambda: self._index_quote_em(ak, trading_status)),
             ],
             source_parts,
         )

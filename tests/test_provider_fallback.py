@@ -298,4 +298,4 @@ def test_akshare_provider_prefers_board_source_with_turnover_fields():
     assert snapshot.boards[0].code == "new_cbzz"
     assert snapshot.boards[0].amount == 8614537882
     assert snapshot.boards[0].volume == 399973253
-    assert snapshot.data_source == "akshare_em+akshare_sina"
+    assert snapshot.data_source == "akshare_sina"

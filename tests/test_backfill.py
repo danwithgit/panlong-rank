@@ -158,3 +158,53 @@ def test_index_backfill_runs_before_stock_queue(monkeypatch):
     assert result["succeeded"] == 1
     assert index_task.status == "success"
     assert stock_task.status == "pending"
+
+
+def test_stock_backfill_falls_back_to_sina_history(monkeypatch):
+    db = _db()
+    backfill._akshare_trade_date_set.cache_clear()
+    monkeypatch.setattr(backfill, "_akshare_trade_dates", lambda days: ["2026-07-08"])
+
+    def fail_em(**kwargs):
+        raise RuntimeError("eastmoney history unavailable")
+
+    fake_ak = types.SimpleNamespace(
+        stock_zh_a_hist=fail_em,
+        stock_zh_a_daily=lambda **kwargs: pd.DataFrame(
+            [
+                {
+                    "date": "2026-07-08",
+                    "open": 10,
+                    "close": 11,
+                    "high": 12,
+                    "low": 9,
+                    "volume": 100,
+                    "amount": 2000,
+                }
+            ]
+        ),
+        stock_zh_a_hist_tx=lambda **kwargs: (_ for _ in ()).throw(AssertionError("Tencent should not run after Sina succeeds")),
+    )
+    monkeypatch.setitem(sys.modules, "akshare", fake_ak)
+    db.add(
+        BackfillTask(
+            task_type="daily_hist",
+            target_type="stock",
+            target_code="600001",
+            target_name="测试股票",
+            sector_code="new_test",
+            sector_name="测试板块",
+            trade_date="2026-07-08",
+            status="pending",
+        )
+    )
+    db.commit()
+
+    result = run_backfill_batch(db, Settings(backfill_batch_size=1))
+
+    row = db.scalar(select(DailyAggregate).where(DailyAggregate.target_type == "stock"))
+    assert result["succeeded"] == 1
+    assert row is not None
+    assert row.close_price == 11
+    assert row.turnover == 2000
+    assert row.data_source == "akshare_hist_sina"
