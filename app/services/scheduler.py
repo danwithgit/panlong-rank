@@ -6,6 +6,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import select
 
 from app.config import Settings
 from app.db.session import SessionLocal
@@ -82,6 +83,19 @@ def _record_timeout(timeout_seconds: int) -> None:
     now = datetime.utcnow()
     db = SessionLocal()
     try:
+        running = db.scalar(
+            select(JobLog)
+            .where(JobLog.job_name == "collect_market_snapshot", JobLog.status == "running")
+            .order_by(JobLog.started_at.desc(), JobLog.id.desc())
+            .limit(1)
+        )
+        if running is not None:
+            running.status = "failed"
+            running.finished_at = now
+            running.error_message = f"collection timed out after {timeout_seconds} seconds"
+            running.rows_count = 0
+            db.commit()
+            return
         db.add(
             JobLog(
                 job_name="collect_market_snapshot",

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -49,6 +51,30 @@ def test_scheduled_collect_records_timeout(monkeypatch):
         row = db.scalar(select(JobLog).where(JobLog.status == "failed"))
         assert row is not None
         assert "timed out" in row.error_message
+    finally:
+        db.close()
+
+
+def test_record_timeout_marks_running_job_failed(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(scheduler, "SessionLocal", session_factory)
+    db = session_factory()
+    try:
+        db.add(JobLog(job_name="collect_market_snapshot", status="running", started_at=datetime(2026, 7, 8, 6, 47, 24)))
+        db.commit()
+    finally:
+        db.close()
+
+    scheduler._record_timeout(150)
+
+    db = session_factory()
+    try:
+        rows = db.scalars(select(JobLog)).all()
+        assert len(rows) == 1
+        assert rows[0].status == "failed"
+        assert "timed out" in rows[0].error_message
     finally:
         db.close()
 

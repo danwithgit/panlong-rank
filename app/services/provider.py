@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime
 import logging
 import time
@@ -26,8 +27,9 @@ class SampleMarketDataProvider(MarketDataProvider):
 
 
 class AkshareMarketDataProvider(MarketDataProvider):
-    def __init__(self, sina_detail_board_limit: int = 16) -> None:
+    def __init__(self, sina_detail_board_limit: int = 16, call_timeout_seconds: float = 5) -> None:
         self.sina_detail_board_limit = max(1, sina_detail_board_limit)
+        self.call_timeout_seconds = max(0.1, call_timeout_seconds)
 
     def snapshot(self, trading_status: TradingStatus) -> MarketSnapshot:
         last_error = None
@@ -231,7 +233,10 @@ class AkshareMarketDataProvider(MarketDataProvider):
         stocks: list[StockQuote] = []
         for board in boards:
             try:
-                df = ak.stock_sector_detail(sector=board.code)
+                df = _call_with_timeout(
+                    lambda: ak.stock_sector_detail(sector=board.code),
+                    timeout_seconds=self.call_timeout_seconds,
+                )
             except Exception as exc:
                 logger.warning("AKShare Sina board detail failed for %s %s: %s", board.code, board.name, exc)
                 continue
@@ -258,8 +263,23 @@ def get_provider(settings: Settings) -> MarketDataProvider:
     if provider == "sample":
         return SampleMarketDataProvider()
     if provider in {"auto", "akshare"}:
-        return AkshareMarketDataProvider(sina_detail_board_limit=settings.sina_detail_board_limit)
+        return AkshareMarketDataProvider(
+            sina_detail_board_limit=settings.sina_detail_board_limit,
+            call_timeout_seconds=settings.provider_call_timeout_seconds,
+        )
     raise ValueError(f"Unsupported DATA_PROVIDER: {settings.data_provider}")
+
+
+def _call_with_timeout(loader, timeout_seconds: int):
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(loader)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except TimeoutError as exc:
+        future.cancel()
+        raise RuntimeError(f"provider call timed out after {timeout_seconds} seconds") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _stock_quotes_from_sector_detail(df: pd.DataFrame, board: BoardQuote, now: datetime) -> list[StockQuote]:

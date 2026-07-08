@@ -1,4 +1,5 @@
 import pandas as pd
+import time
 
 from app.models import TradingStatus
 from app.services.provider import AkshareMarketDataProvider
@@ -199,6 +200,28 @@ def test_akshare_provider_limits_sina_detail_to_high_turnover_boards():
     assert snapshot.boards[0].leader_stock_code is None
     assert snapshot.boards[1].leader_stock_code == "600001"
     assert snapshot.stocks[0].board_code == "new_high"
+
+
+class FakeAkshareWithSlowSinaBoard(FakeAkshareWithManySinaBoards):
+    def stock_sector_detail(self, sector):
+        if sector == "new_high":
+            time.sleep(0.2)
+        return super().stock_sector_detail(sector)
+
+
+def test_akshare_provider_skips_slow_sina_detail_board():
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+    ak = FakeAkshareWithSlowSinaBoard()
+
+    snapshot = AkshareMarketDataProvider(sina_detail_board_limit=2, call_timeout_seconds=0.1)._snapshot_once(status, ak=ak)
+
+    assert len(snapshot.boards) == 2
+    assert {stock.board_code for stock in snapshot.stocks} == {"new_low"}
 
 
 class FakeAkshareWithSinaIndexAndEmBoards(FakeAkshare):
