@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import signal
+import threading
 import time
 from zoneinfo import ZoneInfo
 
@@ -271,7 +272,7 @@ def get_provider(settings: Settings) -> MarketDataProvider:
 
 
 def _call_with_timeout(loader, timeout_seconds: int):
-    if not hasattr(signal, "SIGALRM"):
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
         return loader()
 
     def _raise_timeout(signum, frame):
