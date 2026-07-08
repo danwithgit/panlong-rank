@@ -94,7 +94,7 @@ def test_realtime_snapshot_rejects_stale_trade_session_data():
 
 def test_realtime_snapshot_allows_stale_non_trade_day_data():
     db = _db()
-    stale_at = datetime.now(CN_TZ) - timedelta(days=2)
+    stale_at = (datetime.now(CN_TZ) - timedelta(days=2)).replace(hour=15, minute=0, second=0, microsecond=0)
     save_snapshot(db, _snapshot(stale_at), "sample")
     db.commit()
     status = TradingStatus(

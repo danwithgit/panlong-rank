@@ -10,47 +10,161 @@
     <header class="topbar">
       <div>
         <h1>Panlong Rank</h1>
-        <p>上证指数、板块与龙头股排行榜</p>
+        <p>上证指数、板块与个股排行榜</p>
       </div>
       <div class="status" id="tradeStatus">加载中</div>
     </header>
 
     <main>
       <section class="index-panel" id="indexPanel"></section>
-      <nav class="tabs" id="timeframeTabs" aria-label="时间维度"></nav>
 
-      <section class="chart-band">
-        <div class="section-head">
-          <h2>板块成交额 Top 10</h2>
-          <span id="dataMeta" class="meta">等待数据</span>
-        </div>
-        <div id="turnoverChart" class="chart"></div>
+      <section class="toolbar">
+        <nav class="tabs" id="timeframeTabs" aria-label="时间维度"></nav>
+        <div class="meta" id="dataMeta">等待数据</div>
       </section>
 
-      <section>
-        <div class="section-head">
-          <h2>板块排行榜</h2>
-        </div>
-        <div class="rank-grid" id="boardRankings"></div>
+      <section class="live-grid">
+        <article class="panel board-panel">
+          <div class="section-head">
+            <div>
+              <h2>板块实时榜</h2>
+              <span class="meta" id="boardMeta">按涨幅降序</span>
+            </div>
+            <select id="liveMetricSelect" aria-label="实时榜排序">
+              <option value="change">涨幅</option>
+              <option value="turnover">成交额</option>
+              <option value="volume">成交量</option>
+              <option value="fund">资金量</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>涨跌幅</th>
+                  <th>成交量</th>
+                  <th>成交额</th>
+                  <th>资金量</th>
+                  <th>龙头股</th>
+                </tr>
+              </thead>
+              <tbody id="boardRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel stock-panel">
+          <div class="section-head">
+            <div>
+              <h2 id="stockTitle">板块个股</h2>
+              <span class="meta" id="stockMeta">点击左侧板块查看</span>
+            </div>
+            <select id="stockMetricSelect" aria-label="个股排序">
+              <option value="change">涨幅</option>
+              <option value="turnover">成交额</option>
+              <option value="volume">成交量</option>
+              <option value="fund">资金量</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>股票</th>
+                  <th>价格</th>
+                  <th>涨跌幅</th>
+                  <th>成交量</th>
+                  <th>成交额</th>
+                  <th>资金量</th>
+                </tr>
+              </thead>
+              <tbody id="stockRows"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
-      <section>
-        <div class="section-head">
-          <h2>龙头股排行榜</h2>
-        </div>
-        <div class="rank-grid" id="leaderRankings"></div>
+      <section class="history-grid">
+        <article class="panel">
+          <div class="section-head">
+            <div>
+              <h2>最近 7 日榜</h2>
+              <span class="meta" id="dailyMeta">选择日期查看</span>
+            </div>
+            <select id="dailyDateSelect" aria-label="日榜日期"></select>
+          </div>
+          <div class="table-wrap compact">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>涨跌幅</th>
+                  <th>成交额</th>
+                  <th>质量</th>
+                </tr>
+              </thead>
+              <tbody id="dailyRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="section-head">
+            <div>
+              <h2>最近 4 周榜</h2>
+              <span class="meta" id="weeklyMeta">按周区间查看</span>
+            </div>
+            <select id="weeklyDateSelect" aria-label="周榜日期区间"></select>
+          </div>
+          <div class="table-wrap compact">
+            <table>
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>板块</th>
+                  <th>涨跌幅</th>
+                  <th>成交额</th>
+                  <th>质量</th>
+                </tr>
+              </thead>
+              <tbody id="weeklyRows"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
-      <section class="detail">
+      <section class="panel compare-panel">
         <div class="section-head">
-          <h2 id="detailTitle">板块详情</h2>
-          <span class="meta" id="detailMeta">点击板块查看</span>
+          <div>
+            <h2 id="compareTitle">3 日成交对比</h2>
+            <span class="meta" id="compareMeta">选择板块后显示昨日、前日、大前日对比</span>
+          </div>
         </div>
-        <div class="rank-grid" id="stockRankings"></div>
+        <div class="table-wrap compact">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>对象</th>
+                <th>涨跌幅</th>
+                <th>成交量</th>
+                <th>量环比</th>
+                <th>成交额</th>
+                <th>额环比</th>
+                <th>资金量</th>
+                <th>资金环比</th>
+              </tr>
+            </thead>
+            <tbody id="compareRows"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

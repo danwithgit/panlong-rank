@@ -12,7 +12,7 @@ from app.services.history_rankings import compare_daily, daily_rank, recent_dail
 def _db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine)()
+    return sessionmaker(bind=engine, autoflush=False)()
 
 
 def _seed_snapshot(db, trade_date: str, offset: int, sector_turnover: float, stock_turnover: float):
@@ -46,6 +46,7 @@ def _seed_snapshot(db, trade_date: str, offset: int, sector_turnover: float, sto
             data_source="test",
         )
     )
+    db.flush()
     if db.scalar(select(StockSectorMap).where(StockSectorMap.stock_code == "600001", StockSectorMap.sector_code == "new_test")) is None:
         db.add(
             StockSectorMap(

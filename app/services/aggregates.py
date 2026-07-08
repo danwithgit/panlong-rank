@@ -16,6 +16,7 @@ QUALITY_MISSING = "missing"
 
 
 def rebuild_daily_aggregate(db: Session, trade_date: str, data_quality: str = QUALITY_LIVE) -> int:
+    db.flush()
     index_row = db.scalar(
         select(IndexSnapshot)
         .where(IndexSnapshot.trade_date == trade_date)
@@ -170,6 +171,7 @@ def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int
             )
         )
         rows += 1
+    db.flush()
     return rows
 
 

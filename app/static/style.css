@@ -1,15 +1,17 @@
 :root {
   color-scheme: light;
   font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-  --bg: #f5f7fb;
+  --bg: #f4f6f8;
   --panel: #ffffff;
-  --line: #dfe5ef;
-  --text: #182233;
-  --muted: #647084;
+  --panel-soft: #f8fafc;
+  --line: #d8e0ea;
+  --text: #17202f;
+  --muted: #657287;
   --accent: #1167b1;
-  --accent-strong: #0d4f86;
+  --accent-soft: #e7f1fb;
   --red: #c9332b;
   --green: #16814a;
+  --warn: #9a6a00;
 }
 
 * {
@@ -27,8 +29,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 22px 32px;
-  background: #101820;
+  padding: 20px 32px;
+  background: #111923;
   color: #fff;
 }
 
@@ -44,7 +46,7 @@ body {
 }
 
 .status {
-  min-width: 220px;
+  min-width: 240px;
   padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 6px;
@@ -53,21 +55,21 @@ body {
 }
 
 main {
-  width: min(1440px, 100%);
+  width: min(1500px, 100%);
   margin: 0 auto;
-  padding: 24px 32px 42px;
+  padding: 22px 28px 42px;
 }
 
 .index-panel {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .metric {
-  min-height: 78px;
-  padding: 14px;
+  min-height: 76px;
+  padding: 13px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -82,20 +84,29 @@ main {
 
 .metric strong {
   display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 18px;
-  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
 }
 
 .tabs {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 12px;
-  margin-bottom: 14px;
+  padding-bottom: 2px;
 }
 
 .tabs button {
-  min-width: 112px;
+  min-width: 108px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
@@ -110,33 +121,21 @@ main {
   color: #fff;
 }
 
-.layout {
+.live-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
-.chart-band {
-  margin-bottom: 18px;
-}
-
-.chart {
-  height: 320px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 8px;
-  color: var(--muted);
-}
-
-.rank-grid {
+.history-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
-.rank-card {
+.panel {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -144,44 +143,37 @@ main {
   overflow: hidden;
 }
 
-.rank-card h3 {
-  margin: 0;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  background: #f9fbfe;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.mini-table {
-  overflow: auto;
-}
-
-.detail {
-  margin-top: 18px;
-}
-
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  min-height: 58px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
 }
 
 .section-head h2 {
-  margin: 0;
-  font-size: 18px;
+  margin: 0 0 3px;
+  font-size: 17px;
+  line-height: 1.25;
 }
 
 .meta {
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.35;
   text-align: right;
 }
 
+.section-head .meta {
+  display: block;
+  text-align: left;
+}
+
 select {
-  min-width: 190px;
+  min-width: 128px;
   max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -191,21 +183,35 @@ select {
 }
 
 .table-wrap {
+  max-height: 720px;
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+}
+
+.compact {
+  max-height: 430px;
 }
 
 table {
   width: 100%;
-  min-width: 680px;
+  min-width: 760px;
   border-collapse: collapse;
+}
+
+.stock-panel table {
+  min-width: 700px;
+}
+
+.compact table {
+  min-width: 620px;
+}
+
+.compare-panel table {
+  min-width: 980px;
 }
 
 th,
 td {
-  padding: 11px 12px;
+  padding: 10px 11px;
   border-bottom: 1px solid var(--line);
   text-align: right;
   font-size: 13px;
@@ -213,8 +219,11 @@ td {
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   color: var(--muted);
-  background: #f9fbfe;
+  background: #f8fafc;
   font-weight: 600;
 }
 
@@ -229,8 +238,15 @@ tbody tr {
   cursor: pointer;
 }
 
-tbody tr:hover {
-  background: #f4f8fc;
+tbody tr:hover,
+.active-row {
+  background: var(--accent-soft);
+}
+
+.stock-panel tbody tr,
+.history-grid tbody tr,
+.compare-panel tbody tr {
+  cursor: default;
 }
 
 .name {
@@ -252,17 +268,54 @@ tbody tr:hover {
   color: var(--green);
 }
 
-.leader-tag {
+.empty {
+  height: 84px;
+  color: var(--muted);
+  text-align: center !important;
+}
+
+.quality {
   display: inline-block;
-  min-width: 34px;
+  min-width: 38px;
   padding: 3px 7px;
   border-radius: 999px;
-  background: #e8f2fb;
-  color: var(--accent-strong);
+  background: #edf2f7;
+  color: var(--muted);
   text-align: center;
 }
 
-@media (max-width: 980px) {
+.quality.live {
+  background: #e9f6ef;
+  color: var(--green);
+}
+
+.quality.backfilled {
+  background: #e7f1fb;
+  color: var(--accent);
+}
+
+.quality.partial {
+  background: #fff5df;
+  color: var(--warn);
+}
+
+.quality.missing {
+  background: #f4e6e4;
+  color: var(--red);
+}
+
+@media (max-width: 1180px) {
+  .index-panel {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .live-grid,
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -271,26 +324,33 @@ tbody tr:hover {
 
   .status {
     width: 100%;
+    min-width: 0;
     text-align: left;
   }
 
   main {
-    padding: 18px;
+    padding: 16px;
   }
 
   .index-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .layout {
-    grid-template-columns: 1fr;
+  .toolbar,
+  .section-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .rank-grid {
-    grid-template-columns: 1fr;
+  .meta {
+    text-align: left;
   }
 
-  .chart {
-    height: 280px;
+  .tabs button {
+    min-width: 104px;
+  }
+
+  select {
+    width: 100%;
   }
 }

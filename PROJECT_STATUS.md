@@ -1,6 +1,6 @@
 # Panlong Rank 项目交接记录
 
-更新时间：2026-07-03
+更新时间：2026-07-08
 
 ## 当前目标
 
@@ -22,6 +22,10 @@
 - 正式模式下禁止样例数据兜底：`DATA_PROVIDER=auto` 或 `akshare` 采集失败时不写入假数据。
 - 样例数据仅保留给开发和测试：必须显式设置 `DATA_PROVIDER=sample`。
 - 已增加 AKShare 真实数据源降级链路：Eastmoney `push2` 实时接口不可用时，自动切到 AKShare Sina 指数、板块和板块成分接口。
+- 已实现 30 天历史数据基础层：原始快照保留、日聚合、周聚合、回填任务队列与数据质量状态。
+- 已实现历史 API：最近 7 日、最近 4 周、日榜、周榜、3 日对比、时间段榜。
+- 已改造首页：默认显示一个板块榜，点击板块后右侧展示该板块个股；下方展示最近 7 日榜、最近 4 周榜和 3 日成交对比。
+- 已修复聚合稳定性问题：应用实际 Session 使用 `autoflush=False`，采集后必须在日聚合和周聚合前后显式 `flush`，否则同事务内会看不到刚写入的快照或聚合行。
 
 ## 关键文件
 
@@ -30,11 +34,41 @@
 - `docker-compose.yml`：本地 Docker 部署配置，默认 `DATA_PROVIDER=auto`。
 - `app/services/provider.py`：数据源适配层，当前正式数据源为 AKShare。
 - `app/services/collector.py`：采集、限频、任务日志。
+- `app/services/aggregates.py`：日聚合、周聚合、聚合历史裁剪。
+- `app/services/backfill.py`：慢速历史回填任务队列。
+- `app/services/history_rankings.py`：历史日榜、周榜、对比接口查询。
 - `app/services/ranking_service.py`：从数据库快照计算 API 榜单。
 - `app/services/snapshot_store.py`：快照写入与查询。
 - `app/main.py`：FastAPI 路由。
 - `app/static/`：静态前端页面。
 - `tests/`：当前核心单元测试。
+
+## 2026-07-08 当前验证结果
+
+本地验证：
+
+```text
+PYTHONPYCACHEPREFIX=/private/tmp/panlong-rank-pycache python3 -m pytest
+25 passed
+
+PYTHONPYCACHEPREFIX=/private/tmp/panlong-rank-pycache python3 -m compileall app
+passed
+
+node --check app/static/app.js
+passed
+```
+
+使用临时 SQLite 和 `DATA_PROVIDER=sample` 验证首次采集后聚合：
+
+```text
+index_snapshots 2
+sector_snapshots 24
+stock_snapshots 70
+daily_aggregates 49
+weekly_aggregates 49
+```
+
+注意：样例模式只用于本地验证页面和接口链路；正式部署仍然必须使用真实数据源，不能用样例数据冒充行情。
 
 ## 本地 Docker 验证结果
 

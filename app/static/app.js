@@ -11,13 +11,39 @@ const timeframes = [
   ["last_trade_day", "最近交易日"],
 ];
 
+const metricLabels = {
+  change: "涨幅",
+  turnover: "成交额",
+  volume: "成交量",
+  fund: "资金量",
+};
+
+const metricBlockKeys = {
+  change: "sector_change",
+  turnover: "sector_turnover",
+  volume: "sector_volume",
+  fund: "sector_fund",
+};
+
+const stockBlockKeys = {
+  change: "stock_change",
+  turnover: "stock_turnover",
+  volume: "stock_volume",
+  fund: "stock_fund",
+};
+
 let state = {
   timeframe: "realtime",
-  boardRankings: [],
-  leaderRankings: [],
-  stockRankings: [],
+  liveMetric: "change",
+  stockMetric: "change",
   selectedBoardCode: null,
-  chart: null,
+  selectedBoardName: "",
+  boardBlocks: [],
+  stockBlocks: [],
+  dailyOptions: [],
+  weeklyOptions: [],
+  dailyDate: null,
+  weeklyRange: null,
   refreshTimer: null,
   loading: false,
   lastTradingStatus: null,
@@ -29,17 +55,30 @@ const ACTIVE_REFRESH_MS = 60 * 1000;
 const BREAK_REFRESH_MS = 5 * 60 * 1000;
 
 function formatLarge(value) {
-  if (value === null || value === undefined) return "-";
-  const abs = Math.abs(value);
-  if (abs >= 100000000) return `${moneyFormatter.format(value / 100000000)}亿`;
-  if (abs >= 10000) return `${moneyFormatter.format(value / 10000)}万`;
-  return moneyFormatter.format(value);
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  const number = Number(value);
+  const abs = Math.abs(number);
+  if (abs >= 100000000) return `${moneyFormatter.format(number / 100000000)}亿`;
+  if (abs >= 10000) return `${moneyFormatter.format(number / 10000)}万`;
+  return moneyFormatter.format(number);
+}
+
+function formatPrice(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return Number(value).toFixed(2);
 }
 
 function formatPercent(value) {
-  const text = `${Number(value || 0).toFixed(2)}%`;
-  const cls = value >= 0 ? "up" : "down";
-  return `<span class="${cls}">${text}</span>`;
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  const number = Number(value);
+  const cls = number >= 0 ? "up" : "down";
+  return `<span class="${cls}">${number.toFixed(2)}%</span>`;
+}
+
+function escapeText(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
+  });
 }
 
 function renderTabs() {
@@ -57,14 +96,14 @@ function renderTabs() {
 
 function renderIndex(index) {
   document.querySelector("#indexPanel").innerHTML = [
-    ["指数名称", `${index.name}<span class="sub">${index.code}</span>`],
-    ["当前点位", Number(index.current).toFixed(2)],
-    ["涨跌点数", `<span class="${index.change >= 0 ? "up" : "down"}">${Number(index.change).toFixed(2)}</span>`],
+    ["指数名称", `${escapeText(index.name)}<span class="sub">${escapeText(index.code)}</span>`],
+    ["当前点位", formatPrice(index.current)],
+    ["涨跌点数", `<span class="${index.change >= 0 ? "up" : "down"}">${formatPrice(index.change)}</span>`],
     ["涨跌幅", formatPercent(index.change_percent)],
     ["成交量", formatLarge(index.volume)],
     ["成交额", formatLarge(index.amount)],
-    ["更新时间", new Date(index.updated_at).toLocaleTimeString("zh-CN", { hour12: false })],
-    ["交易状态", index.trading_status.session],
+    ["更新时间", index.updated_at ? new Date(index.updated_at).toLocaleTimeString("zh-CN", { hour12: false }) : "-"],
+    ["交易状态", escapeText(index.trading_status.session)],
   ]
     .map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`)
     .join("");
@@ -77,99 +116,143 @@ function renderStatus(status) {
 function renderMeta(data) {
   const updatedAt = data.index?.updated_at ? new Date(data.index.updated_at).toLocaleString("zh-CN", { hour12: false }) : "-";
   const source = data.index?.data_source || data.data_source || "unknown";
-  const nextRefresh = refreshLabel(data.trading_status);
-  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source} / ${nextRefresh}`;
+  document.querySelector("#dataMeta").textContent = `${data.timeframe_label} / 更新 ${updatedAt} / ${source} / ${refreshLabel(data.trading_status)}`;
 }
 
-function renderRankingCards(selector, rankings, kind) {
-  const container = document.querySelector(selector);
-  container.innerHTML = rankings.map((block) => rankingCard(block, kind)).join("");
-  container.querySelectorAll("tr[data-board-code]").forEach((row) => {
-    row.addEventListener("click", () => loadBoardDetail(row.dataset.boardCode));
+function selectedBoardItems() {
+  const block = state.boardBlocks.find((item) => item.key === metricBlockKeys[state.liveMetric]) || state.boardBlocks[0];
+  return block?.items || [];
+}
+
+function selectedStockItems() {
+  const block = state.stockBlocks.find((item) => item.key === stockBlockKeys[state.stockMetric]) || state.stockBlocks[0];
+  return block?.items || [];
+}
+
+function renderBoards() {
+  const rows = selectedBoardItems();
+  document.querySelector("#boardMeta").textContent = `按${metricLabels[state.liveMetric]}降序 / ${rows.length} 个板块`;
+  document.querySelector("#boardRows").innerHTML = rows.length
+    ? rows.map(boardRow).join("")
+    : `<tr><td colspan="7" class="empty">当前没有可展示的板块数据</td></tr>`;
+  document.querySelectorAll("#boardRows tr[data-board-code]").forEach((row) => {
+    row.addEventListener("click", () => {
+      loadBoardDetail(row.dataset.boardCode, row.dataset.boardName);
+    });
   });
 }
 
-function renderLoadingState(label = "加载中") {
-  document.querySelector("#dataMeta").textContent = label;
-  document.querySelector("#boardRankings").innerHTML = "";
-  document.querySelector("#leaderRankings").innerHTML = "";
-  document.querySelector("#stockRankings").innerHTML = "";
-  document.querySelector("#detailTitle").textContent = "板块详情";
-  document.querySelector("#detailMeta").textContent = "等待数据";
-  const chartEl = document.querySelector("#turnoverChart");
-  if (state.chart) {
-    state.chart.clear();
-  } else {
-    chartEl.textContent = label;
-  }
-}
-
-function rankingCard(block, kind) {
-  const rows = (block.items || []).map((item) => rankingRow(item, kind)).join("");
+function boardRow(item) {
+  const active = item.board_code === state.selectedBoardCode ? "active-row" : "";
   return `
-    <article class="rank-card">
-      <h3>${block.title}</h3>
-      <div class="mini-table">
-        <table>
-          <thead>${tableHead(kind)}</thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </article>
-  `;
-}
-
-function tableHead(kind) {
-  if (kind === "sector") {
-    return `<tr><th>排名</th><th>板块</th><th>涨跌幅</th><th>成交额</th><th>资金量</th><th>龙头股</th></tr>`;
-  }
-  return `<tr><th>排名</th><th>股票</th><th>板块</th><th>价格</th><th>涨跌幅</th><th>成交额</th><th>资金量</th></tr>`;
-}
-
-function rankingRow(item, kind) {
-  if (kind === "sector") {
-    return `
-      <tr data-board-code="${item.board_code}">
-        <td>${item.rank}</td>
-        <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
-        <td>${formatPercent(item.change_percent)}</td>
-        <td>${formatLarge(item.amount)}</td>
-        <td>${formatLarge(item.capital_flow)}</td>
-        <td><span class="name">${item.leader_stock_name || "-"}</span><span class="sub">${item.leader_stock_code || ""}</span></td>
-      </tr>`;
-  }
-  return `
-    <tr data-board-code="${item.board_code}">
+    <tr class="${active}" data-board-code="${escapeText(item.board_code)}" data-board-name="${escapeText(item.board_name)}">
       <td>${item.rank}</td>
-      <td><span class="name">${item.stock_name}</span><span class="sub">${item.stock_code}${item.is_leader ? " / 龙头" : ""}</span></td>
-      <td><span class="name">${item.board_name}</span><span class="sub">${item.board_code}</span></td>
-      <td>${item.current_price ? Number(item.current_price).toFixed(2) : "-"}</td>
+      <td><span class="name">${escapeText(item.board_name)}</span><span class="sub">${escapeText(item.board_code)}</span></td>
       <td>${formatPercent(item.change_percent)}</td>
+      <td>${formatLarge(item.volume)}</td>
+      <td>${formatLarge(item.amount)}</td>
+      <td>${formatLarge(item.capital_flow)}</td>
+      <td><span class="name">${escapeText(item.leader_stock_name || "-")}</span><span class="sub">${escapeText(item.leader_stock_code || "")}</span></td>
+    </tr>`;
+}
+
+function renderStocks() {
+  const rows = selectedStockItems();
+  const title = state.selectedBoardName ? `${state.selectedBoardName} 个股` : "板块个股";
+  document.querySelector("#stockTitle").textContent = title;
+  document.querySelector("#stockMeta").textContent = rows.length
+    ? `按${metricLabels[state.stockMetric]}降序 / ${rows.length} 只个股`
+    : "当前板块没有可展示的个股数据";
+  document.querySelector("#stockRows").innerHTML = rows.length
+    ? rows.map(stockRow).join("")
+    : `<tr><td colspan="7" class="empty">点击左侧板块查看个股</td></tr>`;
+}
+
+function stockRow(item) {
+  return `
+    <tr>
+      <td>${item.rank}</td>
+      <td><span class="name">${escapeText(item.stock_name)}</span><span class="sub">${escapeText(item.stock_code)}${item.is_leader ? " / 龙头" : ""}</span></td>
+      <td>${formatPrice(item.current_price)}</td>
+      <td>${formatPercent(item.change_percent)}</td>
+      <td>${formatLarge(item.volume)}</td>
       <td>${formatLarge(item.amount)}</td>
       <td>${formatLarge(item.capital_flow)}</td>
     </tr>`;
 }
 
-function renderTurnoverChart() {
-  const block = state.boardRankings.find((item) => item.key === "sector_turnover") || state.boardRankings[0];
-  const el = document.querySelector("#turnoverChart");
-  if (!block || !window.echarts) {
-    el.textContent = "图表资源未加载，排行榜数据仍可查看。";
-    return;
+function renderDailyOptions() {
+  const select = document.querySelector("#dailyDateSelect");
+  select.innerHTML = state.dailyOptions.length
+    ? state.dailyOptions.map((item) => `<option value="${escapeText(item.trade_date)}">${escapeText(item.trade_date)}</option>`).join("")
+    : `<option value="">暂无日期</option>`;
+  if (!state.dailyDate && state.dailyOptions[0]) state.dailyDate = state.dailyOptions[0].trade_date;
+  select.value = state.dailyDate || "";
+}
+
+function renderWeeklyOptions() {
+  const select = document.querySelector("#weeklyDateSelect");
+  select.innerHTML = state.weeklyOptions.length
+    ? state.weeklyOptions
+        .map((item) => `<option value="${escapeText(item.week_start)}|${escapeText(item.week_end)}">${escapeText(item.label)}</option>`)
+        .join("")
+    : `<option value="">暂无周区间</option>`;
+  if (!state.weeklyRange && state.weeklyOptions[0]) {
+    state.weeklyRange = { weekStart: state.weeklyOptions[0].week_start, weekEnd: state.weeklyOptions[0].week_end };
   }
-  if (!state.chart) {
-    state.chart = echarts.init(el);
-    window.addEventListener("resize", () => state.chart.resize());
-  }
-  const items = [...block.items].reverse();
-  state.chart.setOption({
-    animation: false,
-    grid: { left: 96, right: 28, top: 18, bottom: 24 },
-    xAxis: { type: "value", axisLabel: { formatter: (value) => formatLarge(value) } },
-    yAxis: { type: "category", data: items.map((item) => item.board_name) },
-    tooltip: { trigger: "axis", valueFormatter: (value) => formatLarge(value) },
-    series: [{ type: "bar", data: items.map((item) => item.amount), itemStyle: { color: "#1167b1" } }],
-  });
+  select.value = state.weeklyRange ? `${state.weeklyRange.weekStart}|${state.weeklyRange.weekEnd}` : "";
+}
+
+function renderHistoryRows(selector, items) {
+  document.querySelector(selector).innerHTML = items.length
+    ? items.map(historyRow).join("")
+    : `<tr><td colspan="5" class="empty">暂无历史聚合数据</td></tr>`;
+}
+
+function historyRow(item) {
+  return `
+    <tr>
+      <td>${item.rank}</td>
+      <td><span class="name">${escapeText(item.target_name)}</span><span class="sub">${escapeText(item.target_code)}</span></td>
+      <td>${formatPercent(item.change_percent)}</td>
+      <td>${formatLarge(item.turnover)}</td>
+      <td><span class="quality ${escapeText(item.data_quality)}">${qualityLabel(item.data_quality)}</span></td>
+    </tr>`;
+}
+
+function renderCompare(data) {
+  const rows = data.items || [];
+  document.querySelector("#compareTitle").textContent = state.selectedBoardName ? `${state.selectedBoardName} 3 日成交对比` : "3 日成交对比";
+  document.querySelector("#compareMeta").textContent = rows.length
+    ? `${data.trade_date || "-"} 起最近 ${rows.length} 个交易日`
+    : "没有足够的历史聚合数据";
+  document.querySelector("#compareRows").innerHTML = rows.length
+    ? rows.map(compareRow).join("")
+    : `<tr><td colspan="9" class="empty">暂无对比数据</td></tr>`;
+}
+
+function compareRow(item) {
+  return `
+    <tr>
+      <td>${escapeText(item.trade_date)}</td>
+      <td><span class="name">${escapeText(item.target_name)}</span><span class="sub">${escapeText(item.target_code)}</span></td>
+      <td>${formatPercent(item.change_percent)}</td>
+      <td>${formatLarge(item.volume)}</td>
+      <td>${formatPercent(item.volume_change_percent)}</td>
+      <td>${formatLarge(item.turnover)}</td>
+      <td>${formatPercent(item.turnover_change_percent)}</td>
+      <td>${formatLarge(item.fund_amount)}</td>
+      <td>${formatPercent(item.fund_change_percent)}</td>
+    </tr>`;
+}
+
+function qualityLabel(value) {
+  return {
+    live: "实时",
+    backfilled: "回填",
+    partial: "部分",
+    missing: "缺失",
+  }[value] || value || "-";
 }
 
 function refreshLabel(status) {
@@ -193,22 +276,59 @@ function scheduleNextRefresh(status) {
   }
   const delay = refreshDelay(status);
   if (!delay || document.hidden) return;
-  state.refreshTimer = window.setTimeout(() => {
-    refreshDashboard();
-  }, delay);
+  state.refreshTimer = window.setTimeout(() => refreshDashboard(), delay);
+}
+
+function renderLoadingState(label = "加载中") {
+  document.querySelector("#dataMeta").textContent = label;
+  document.querySelector("#boardRows").innerHTML = `<tr><td colspan="7" class="empty">${label}</td></tr>`;
+  document.querySelector("#stockRows").innerHTML = `<tr><td colspan="7" class="empty">${label}</td></tr>`;
+}
+
+function renderError(error) {
+  document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
+  document.querySelector("#dataMeta").textContent = `数据不可用：${error.message}`;
+  document.querySelector("#boardRows").innerHTML = `<tr><td colspan="7" class="empty">数据缺失或上游服务繁忙</td></tr>`;
+  document.querySelector("#stockRows").innerHTML = `<tr><td colspan="7" class="empty">数据缺失或上游服务繁忙</td></tr>`;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`${response.status} ${detail.slice(0, 120)}`);
+  }
+  return response.json();
 }
 
 async function refreshDashboard(options = {}) {
   if (state.loading && !options.force) return;
   const seq = ++state.requestSeq;
   state.loading = true;
+  renderTabs();
   renderLoadingState(`${timeframeLabel(state.timeframe)} 加载中`);
   try {
-    await loadDashboard(seq);
-  } catch (error) {
+    const data = await fetchJson(`/api/dashboard?timeframe=${encodeURIComponent(state.timeframe)}&limit=50`);
     if (seq !== state.requestSeq) return;
-    document.querySelector("#tradeStatus").textContent = `行情服务器繁忙：${error.message}`;
-    renderLoadingState(`数据不可用：${error.message}`);
+    state.boardBlocks = data.board_rankings || [];
+    state.lastTradingStatus = data.trading_status;
+    renderIndex(data.index);
+    renderStatus(data.trading_status);
+    renderMeta(data);
+    const fallback = selectedBoardItems()[0];
+    if (!state.selectedBoardCode && fallback) {
+      state.selectedBoardCode = fallback.board_code;
+      state.selectedBoardName = fallback.board_name;
+    }
+    renderBoards();
+    if (state.selectedBoardCode) {
+      await loadBoardDetail(state.selectedBoardCode, state.selectedBoardName, seq);
+    } else {
+      renderStocks();
+    }
+    await refreshHistory(seq);
+  } catch (error) {
+    if (seq === state.requestSeq) renderError(error);
   } finally {
     if (seq !== state.requestSeq) return;
     state.loading = false;
@@ -216,41 +336,92 @@ async function refreshDashboard(options = {}) {
   }
 }
 
+async function loadBoardDetail(boardCode, boardName = "", seq = state.requestSeq) {
+  state.selectedBoardCode = boardCode;
+  state.selectedBoardName = boardName || state.selectedBoardName;
+  renderBoards();
+  const data = await fetchJson(`/api/boards/${encodeURIComponent(boardCode)}?timeframe=${encodeURIComponent(state.timeframe)}&limit=50`);
+  if (seq !== state.requestSeq) return;
+  state.stockBlocks = data.stock_rankings || [];
+  state.selectedBoardName = data.board?.name || state.selectedBoardName;
+  renderStocks();
+  await refreshCompare(seq);
+}
+
+async function refreshHistory(seq = state.requestSeq) {
+  const [days, weeks] = await Promise.all([
+    fetchJson("/api/history/days?limit=7"),
+    fetchJson("/api/history/weeks?limit=4"),
+  ]);
+  if (seq !== state.requestSeq) return;
+  state.dailyOptions = days.items || [];
+  state.weeklyOptions = weeks.items || [];
+  renderDailyOptions();
+  renderWeeklyOptions();
+  await Promise.all([refreshDailyRank(seq), refreshWeeklyRank(seq), refreshCompare(seq)]);
+}
+
+async function refreshDailyRank(seq = state.requestSeq) {
+  const dateQuery = state.dailyDate ? `&trade_date=${encodeURIComponent(state.dailyDate)}` : "";
+  const data = await fetchJson(`/api/history/daily-rank?target_type=sector&metric=turnover&limit=20${dateQuery}`);
+  if (seq !== state.requestSeq) return;
+  document.querySelector("#dailyMeta").textContent = `${data.trade_date || "-"} / ${qualityLabel(data.data_quality)}`;
+  renderHistoryRows("#dailyRows", data.items || []);
+}
+
+async function refreshWeeklyRank(seq = state.requestSeq) {
+  const rangeQuery = state.weeklyRange
+    ? `&week_start=${encodeURIComponent(state.weeklyRange.weekStart)}&week_end=${encodeURIComponent(state.weeklyRange.weekEnd)}`
+    : "";
+  const data = await fetchJson(`/api/history/weekly-rank?target_type=sector&metric=turnover&limit=20${rangeQuery}`);
+  if (seq !== state.requestSeq) return;
+  document.querySelector("#weeklyMeta").textContent = `${data.label || "-"} / ${qualityLabel(data.data_quality)}`;
+  renderHistoryRows("#weeklyRows", data.items || []);
+}
+
+async function refreshCompare(seq = state.requestSeq) {
+  if (!state.selectedBoardCode) {
+    renderCompare({ items: [] });
+    return;
+  }
+  const dateQuery = state.dailyDate ? `&trade_date=${encodeURIComponent(state.dailyDate)}` : "";
+  const data = await fetchJson(`/api/history/compare?target_type=sector&target_code=${encodeURIComponent(state.selectedBoardCode)}&days=3${dateQuery}`);
+  if (seq !== state.requestSeq) return;
+  renderCompare(data);
+}
+
 function timeframeLabel(timeframe) {
   return timeframes.find(([key]) => key === timeframe)?.[1] || timeframe;
 }
 
-async function loadDashboard(seq) {
-  renderTabs();
-  const response = await fetch(`/api/dashboard?timeframe=${state.timeframe}&limit=10`);
-  if (!response.ok) throw new Error(`dashboard request failed: ${response.status}`);
-  const data = await response.json();
-  if (seq !== state.requestSeq) return;
-  state.boardRankings = data.board_rankings;
-  state.leaderRankings = data.leader_rankings;
-  state.lastTradingStatus = data.trading_status;
-  renderIndex(data.index);
-  renderStatus(data.trading_status);
-  renderMeta(data);
-  renderRankingCards("#boardRankings", state.boardRankings, "sector");
-  renderRankingCards("#leaderRankings", state.leaderRankings, "stock");
-  renderTurnoverChart();
-  const fallbackBoard = data.board_rankings?.[0]?.items?.[0]?.board_code;
-  const boardCode = state.selectedBoardCode || fallbackBoard;
-  if (boardCode) await loadBoardDetail(boardCode, seq);
-}
+document.querySelector("#liveMetricSelect").addEventListener("change", (event) => {
+  state.liveMetric = event.target.value;
+  const fallback = selectedBoardItems()[0];
+  if (fallback && !selectedBoardItems().some((item) => item.board_code === state.selectedBoardCode)) {
+    state.selectedBoardCode = fallback.board_code;
+    state.selectedBoardName = fallback.board_name;
+    loadBoardDetail(fallback.board_code, fallback.board_name);
+  } else {
+    renderBoards();
+  }
+});
 
-async function loadBoardDetail(boardCode, seq = state.requestSeq) {
-  state.selectedBoardCode = boardCode;
-  const response = await fetch(`/api/boards/${boardCode}?timeframe=${state.timeframe}&limit=10`);
-  if (!response.ok) return;
-  const data = await response.json();
-  if (seq !== state.requestSeq) return;
-  state.stockRankings = data.stock_rankings;
-  document.querySelector("#detailTitle").textContent = `${data.board.name} 板块详情`;
-  document.querySelector("#detailMeta").textContent = `${formatPercent(data.board.change_percent).replace(/<[^>]*>/g, "")} / ${formatLarge(data.board.amount)}`;
-  renderRankingCards("#stockRankings", state.stockRankings, "stock");
-}
+document.querySelector("#stockMetricSelect").addEventListener("change", (event) => {
+  state.stockMetric = event.target.value;
+  renderStocks();
+});
+
+document.querySelector("#dailyDateSelect").addEventListener("change", async (event) => {
+  state.dailyDate = event.target.value || null;
+  const seq = state.requestSeq;
+  await Promise.all([refreshDailyRank(seq), refreshCompare(seq)]);
+});
+
+document.querySelector("#weeklyDateSelect").addEventListener("change", async (event) => {
+  const [weekStart, weekEnd] = event.target.value.split("|");
+  state.weeklyRange = weekStart && weekEnd ? { weekStart, weekEnd } : null;
+  await refreshWeeklyRank(state.requestSeq);
+});
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
@@ -262,5 +433,7 @@ document.addEventListener("visibilitychange", () => {
   }
   refreshDashboard({ force: true });
 });
+
+window.addEventListener("focus", () => refreshDashboard({ force: true }));
 
 refreshDashboard({ force: true });
