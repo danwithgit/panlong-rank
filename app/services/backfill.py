@@ -6,7 +6,7 @@ import time
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -108,7 +108,11 @@ def run_backfill_batch(db: Session, settings: Settings) -> dict:
                 BackfillTask.next_run_at <= now,
                 BackfillTask.attempts < settings.backfill_max_attempts,
             )
-            .order_by(BackfillTask.next_run_at.asc(), BackfillTask.id.asc())
+            .order_by(
+                case((BackfillTask.target_type == "index", 0), else_=1),
+                BackfillTask.next_run_at.asc(),
+                BackfillTask.id.asc(),
+            )
             .limit(settings.backfill_batch_size)
         )
     )

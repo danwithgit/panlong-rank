@@ -114,3 +114,47 @@ def test_index_backfill_writes_daily_aggregate(monkeypatch):
     assert row is not None
     assert row.close_price == 4040
     assert row.change_percent == 1.0
+
+
+def test_index_backfill_runs_before_stock_queue(monkeypatch):
+    db = _db()
+    backfill._akshare_trade_date_set.cache_clear()
+    monkeypatch.setattr(backfill, "_akshare_trade_dates", lambda days: ["2026-07-08"])
+    fake_ak = types.SimpleNamespace(
+        stock_zh_index_daily=lambda symbol: pd.DataFrame(
+            [{"date": "2026-07-08", "open": 4000, "close": 4040, "high": 4050, "low": 3990, "volume": 100, "amount": 200}]
+        ),
+        stock_zh_a_hist=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("stock should not run first")),
+    )
+    monkeypatch.setitem(sys.modules, "akshare", fake_ak)
+    db.add(
+        BackfillTask(
+            task_type="daily_hist",
+            target_type="stock",
+            target_code="600001",
+            target_name="测试股票",
+            sector_code="new_test",
+            sector_name="测试板块",
+            trade_date="2026-07-08",
+            status="pending",
+        )
+    )
+    db.add(
+        BackfillTask(
+            task_type="daily_hist",
+            target_type="index",
+            target_code="000001",
+            target_name="上证指数",
+            trade_date="2026-07-08",
+            status="pending",
+        )
+    )
+    db.commit()
+
+    result = run_backfill_batch(db, Settings(backfill_batch_size=1))
+
+    index_task = db.scalar(select(BackfillTask).where(BackfillTask.target_type == "index"))
+    stock_task = db.scalar(select(BackfillTask).where(BackfillTask.target_type == "stock"))
+    assert result["succeeded"] == 1
+    assert index_task.status == "success"
+    assert stock_task.status == "pending"
