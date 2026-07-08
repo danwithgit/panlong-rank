@@ -21,12 +21,12 @@ def collect_market_snapshot(db: Session, settings: Settings, force: bool = False
 
     job = JobLog(job_name="collect_market_snapshot", status="running", started_at=started_at, rows_count=0)
     db.add(job)
-    db.flush()
+    db.commit()
+    job_id = job.id
     try:
         status = get_trading_status(settings)
         if not status.is_trade_day and not force:
-            job.status = "skipped"
-            job.finished_at = datetime.utcnow()
+            _finish_job(db, job_id, status="skipped", rows_count=0, error_message=None)
             db.commit()
             raise RuntimeError(status.message or "non-trade day, collection skipped")
 
@@ -38,24 +38,25 @@ def collect_market_snapshot(db: Session, settings: Settings, force: bool = False
         rows += rebuild_recent_weekly_aggregates(db)
         trim_old_snapshots(db, keep_trade_dates=settings.snapshot_keep_trade_dates)
         trim_aggregate_history(db, keep_days=settings.aggregate_keep_trade_days)
-        job.status = "success"
-        job.rows_count = rows
-        job.finished_at = datetime.utcnow()
+        _finish_job(db, job_id, status="success", rows_count=rows, error_message=None)
         db.commit()
         return snapshot
     except Exception as exc:
         db.rollback()
-        failed = JobLog(
-            job_name="collect_market_snapshot",
-            status="failed",
-            started_at=started_at,
-            finished_at=datetime.utcnow(),
-            error_message=str(exc),
-            rows_count=0,
-        )
-        db.add(failed)
+        _finish_job(db, job_id, status="failed", rows_count=0, error_message=str(exc))
         db.commit()
         raise
+
+
+def _finish_job(db: Session, job_id: int, status: str, rows_count: int, error_message: str | None) -> None:
+    job = db.get(JobLog, job_id)
+    if job is None:
+        job = JobLog(job_name="collect_market_snapshot", status=status, started_at=datetime.utcnow())
+        db.add(job)
+    job.status = status
+    job.rows_count = rows_count
+    job.error_message = error_message
+    job.finished_at = datetime.utcnow()
 
 
 def _is_rate_limited(db: Session, settings: Settings, now: datetime, force: bool) -> bool:
