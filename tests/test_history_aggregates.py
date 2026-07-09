@@ -108,6 +108,83 @@ def test_daily_weekly_aggregates_and_history_queries():
     assert compare["items"][1]["turnover_change_percent"] == 50.0
 
 
+def test_history_rank_change_metric_orders_by_change_percent_desc():
+    db = _db()
+    now = datetime(2026, 7, 6, 15, 0, 0)
+    daily_rows = [
+        ("sector_down", "下跌高成交板块", -3.2, 9000),
+        ("sector_up", "上涨低成交板块", 4.8, 1000),
+        ("sector_mid", "小涨中成交板块", 1.5, 5000),
+    ]
+    weekly_rows = [
+        ("week_down", "周跌高成交板块", -2.1, 30000),
+        ("week_up", "周涨低成交板块", 8.6, 8000),
+        ("week_mid", "周小涨中成交板块", 3.4, 16000),
+    ]
+    for code, name, change_percent, turnover in daily_rows:
+        db.add(
+            DailyAggregate(
+                trade_date="2026-07-06",
+                target_type="sector",
+                target_code=code,
+                target_name=name,
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=change_percent,
+                volume=turnover / 10,
+                turnover=turnover,
+                fund_amount=turnover,
+                snapshot_time=now,
+                data_source="test",
+                data_quality="live",
+            )
+        )
+    for code, name, change_percent, turnover in weekly_rows:
+        db.add(
+            WeeklyAggregate(
+                week_start="2026-07-01",
+                week_end="2026-07-07",
+                target_type="sector",
+                target_code=code,
+                target_name=name,
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=change_percent,
+                volume=turnover / 10,
+                turnover=turnover,
+                fund_amount=turnover,
+                trading_days=5,
+                data_source="test",
+                data_quality="live",
+            )
+        )
+    db.commit()
+
+    daily = daily_rank(db, "2026-07-06", "sector", "change", 10)
+    weekly = weekly_rank(db, "2026-07-01", "2026-07-07", "sector", "change", 10)
+
+    assert [item["target_code"] for item in daily["items"]] == ["sector_up", "sector_mid", "sector_down"]
+    assert [item["change_percent"] for item in daily["items"]] == [4.8, 1.5, -3.2]
+    assert [item["target_code"] for item in weekly["items"]] == ["week_up", "week_mid", "week_down"]
+    assert [item["change_percent"] for item in weekly["items"]] == [8.6, 3.4, -2.1]
+
+
+def test_history_api_defaults_to_change_metric():
+    import inspect
+
+    from app.main import history_daily_rank, history_weekly_rank
+
+    daily_metric = inspect.signature(history_daily_rank).parameters["metric"].default
+    weekly_metric = inspect.signature(history_weekly_rank).parameters["metric"].default
+
+    assert daily_metric.default == "change"
+    assert weekly_metric.default == "change"
+
+
 def test_rebuild_daily_replaces_existing_rows():
     db = _db()
     _seed_snapshot(db, "2026-07-01", 0, 1000, 100)

@@ -363,9 +363,9 @@ async function refreshHistory(seq = state.requestSeq) {
 
 async function refreshDailyRank(seq = state.requestSeq) {
   const dateQuery = state.dailyDate ? `&trade_date=${encodeURIComponent(state.dailyDate)}` : "";
-  const data = await fetchJson(`/api/history/daily-rank?target_type=sector&metric=turnover&limit=20${dateQuery}`);
+  const data = await fetchJson(`/api/history/daily-rank?target_type=sector&metric=change&limit=20${dateQuery}`);
   if (seq !== state.requestSeq) return;
-  document.querySelector("#dailyMeta").textContent = `${data.trade_date || "-"} / ${qualityLabel(data.data_quality)}`;
+  document.querySelector("#dailyMeta").textContent = `${data.trade_date || "-"} / 按涨幅降序 / ${qualityLabel(data.data_quality)}`;
   renderHistoryRows("#dailyRows", data.items || []);
 }
 
@@ -373,9 +373,9 @@ async function refreshWeeklyRank(seq = state.requestSeq) {
   const rangeQuery = state.weeklyRange
     ? `&week_start=${encodeURIComponent(state.weeklyRange.weekStart)}&week_end=${encodeURIComponent(state.weeklyRange.weekEnd)}`
     : "";
-  const data = await fetchJson(`/api/history/weekly-rank?target_type=sector&metric=turnover&limit=20${rangeQuery}`);
+  const data = await fetchJson(`/api/history/weekly-rank?target_type=sector&metric=change&limit=20${rangeQuery}`);
   if (seq !== state.requestSeq) return;
-  document.querySelector("#weeklyMeta").textContent = `${data.label || "-"} / ${qualityLabel(data.data_quality)}`;
+  document.querySelector("#weeklyMeta").textContent = `${data.label || "-"} / 按涨幅降序 / ${qualityLabel(data.data_quality)}`;
   renderHistoryRows("#weeklyRows", data.items || []);
 }
 

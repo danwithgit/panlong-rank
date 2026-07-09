@@ -144,7 +144,7 @@ def history_weeks(limit: int = Query(default=4, ge=1, le=12), db: Session = Depe
 def history_daily_rank(
     trade_date: Optional[str] = None,
     target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
-    metric: str = Query(default="turnover", pattern="^(turnover|volume|fund|change)$"),
+    metric: str = Query(default="change", pattern="^(turnover|volume|fund|change)$"),
     sector_code: Optional[str] = None,
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -157,7 +157,7 @@ def history_weekly_rank(
     week_start: Optional[str] = None,
     week_end: Optional[str] = None,
     target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
-    metric: str = Query(default="turnover", pattern="^(turnover|volume|fund|change)$"),
+    metric: str = Query(default="change", pattern="^(turnover|volume|fund|change)$"),
     sector_code: Optional[str] = None,
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
