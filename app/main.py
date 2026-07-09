@@ -60,7 +60,10 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.get("/")
 def index_page():
-    return FileResponse("app/static/index.html")
+    return FileResponse(
+        "app/static/index.html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/api/health")

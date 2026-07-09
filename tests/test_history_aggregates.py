@@ -185,6 +185,45 @@ def test_history_api_defaults_to_change_metric():
     assert weekly_metric.default == "change"
 
 
+def test_weekly_sector_change_compounds_daily_change_when_prices_missing():
+    db = _db()
+    now = datetime(2026, 7, 6, 15, 0, 0)
+    rows = [
+        ("2026-07-06", "strong_then_small", "先强后小涨", 8.0, 1000),
+        ("2026-07-07", "strong_then_small", "先强后小涨", 0.5, 1000),
+        ("2026-07-06", "last_day_only", "最后一天大涨", -2.0, 2000),
+        ("2026-07-07", "last_day_only", "最后一天大涨", 4.0, 2000),
+    ]
+    for trade_date, code, name, change_percent, turnover in rows:
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code=code,
+                target_name=name,
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=change_percent,
+                volume=turnover / 10,
+                turnover=turnover,
+                fund_amount=turnover,
+                snapshot_time=now,
+                data_source="test",
+                data_quality="live",
+            )
+        )
+    rebuild_recent_weekly_aggregates(db, max_weeks=1)
+    db.commit()
+
+    weekly = weekly_rank(db, "2026-07-06", "2026-07-07", "sector", "change", 10)
+
+    assert [item["target_code"] for item in weekly["items"][:2]] == ["strong_then_small", "last_day_only"]
+    assert weekly["items"][0]["change_percent"] == 8.54
+    assert weekly["items"][1]["change_percent"] == 1.92
+
+
 def test_rebuild_daily_replaces_existing_rows():
     db = _db()
     _seed_snapshot(db, "2026-07-01", 0, 1000, 100)

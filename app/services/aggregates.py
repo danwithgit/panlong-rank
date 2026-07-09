@@ -161,7 +161,7 @@ def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int
                 close_price=last.close_price,
                 high_price=max(item.high_price for item in items),
                 low_price=min(item.low_price for item in items),
-                change_percent=_change_percent(first.open_price, last.close_price, last.change_percent),
+                change_percent=_aggregate_change_percent(items),
                 volume=sum(item.volume for item in items),
                 turnover=sum(item.turnover for item in items),
                 fund_amount=sum(item.fund_amount for item in items),
@@ -270,3 +270,22 @@ def _change_percent(open_price: float, close_price: float, fallback: float) -> f
     if open_price > 0:
         return round((close_price - open_price) / open_price * 100, 4)
     return fallback
+
+
+def _aggregate_change_percent(items: list[DailyAggregate]) -> float:
+    first = items[0]
+    last = items[-1]
+    if first.open_price > 0:
+        return _change_percent(first.open_price, last.close_price, last.change_percent)
+    return _compound_change_percent(item.change_percent for item in items)
+
+
+def _compound_change_percent(values: Iterable[float]) -> float:
+    multiplier = 1.0
+    has_value = False
+    for value in values:
+        multiplier *= 1 + value / 100
+        has_value = True
+    if not has_value:
+        return 0
+    return round((multiplier - 1) * 100, 4)
