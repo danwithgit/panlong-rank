@@ -206,7 +206,7 @@ def _cumulative_rows(db: Session, dates: list[str], target_type: str) -> list[di
         item["fund_amount"] += row.fund_amount
         item["_trade_dates"].add(row.trade_date)
         item["_qualities"].add(row.data_quality)
-        item["_sources"].add(row.data_source)
+        item["_sources"].update(_source_parts(row.data_source))
 
     values = []
     for item in grouped.values():
@@ -229,6 +229,10 @@ def _top_cumulative(rows: list[dict], metric: str) -> Optional[dict]:
     item = dict(ranked[0])
     item["rank"] = 1
     return item
+
+
+def _source_parts(value: str) -> set[str]:
+    return {part for part in value.split("+") if part}
 
 
 def _dict_quality(rows: list[dict]) -> str:

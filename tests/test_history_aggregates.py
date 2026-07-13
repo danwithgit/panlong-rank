@@ -209,7 +209,7 @@ def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
                 turnover=100,
                 fund_amount=0,
                 snapshot_time=now + timedelta(days=index),
-                data_source="test",
+                data_source="test+fallback",
                 data_quality="live",
             )
         )
@@ -263,6 +263,7 @@ def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
     assert items["today_turnover"]["item"]["target_code"] == "today_hot"
     assert items["seven_day_volume"]["item"]["target_code"] == "steady"
     assert items["seven_day_volume"]["item"]["volume"] == 7000
+    assert items["seven_day_volume"]["item"]["data_source"] == "fallback+test"
     assert items["seven_day_turnover"]["item"]["target_code"] == "turnover_week"
     assert items["seven_day_turnover"]["item"]["turnover"] == 14000
 
