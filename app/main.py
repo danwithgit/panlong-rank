@@ -167,9 +167,10 @@ def history_weeks(limit: int = Query(default=4, ge=1, le=12), db: Session = Depe
 @app.get("/api/report/summary")
 def report_summary(
     target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
+    period: str = Query(default="3d", pattern="^(3d|5d|week)$"),
     db: Session = Depends(get_db),
 ):
-    return summary_report(db, target_type)
+    return summary_report(db, target_type, period)
 
 
 @app.get("/api/history/daily-rank")

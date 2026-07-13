@@ -110,6 +110,28 @@ main {
   min-height: 54px;
 }
 
+.report-controls {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.report-controls button {
+  min-width: 92px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.report-controls button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
 .report-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -428,6 +450,15 @@ tbody tr:hover,
 
   .report-title {
     min-height: 0;
+  }
+
+  .report-controls {
+    width: 100%;
+  }
+
+  .report-controls button {
+    min-width: 0;
+    flex: 1;
   }
 
   .toolbar,

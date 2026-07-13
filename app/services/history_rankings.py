@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from math import ceil
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.tables import DailyAggregate, WeeklyAggregate
@@ -17,6 +19,14 @@ RANK_METRICS = {
     "change": "change_percent",
 }
 
+REPORT_PERIODS = {
+    "3d": {"label": "近3交易日", "days": 3},
+    "5d": {"label": "近5交易日", "days": 5},
+    "week": {"label": "本周", "days": None},
+}
+
+COMPLETE_DAY_RATIO = 0.9
+
 
 def recent_daily_options(db: Session, limit: int = 7) -> list[dict]:
     return [{"trade_date": value} for value in recent_trade_dates(db, limit)]
@@ -29,15 +39,21 @@ def recent_weekly_options(db: Session, limit: int = 4) -> list[dict]:
     ]
 
 
-def summary_report(db: Session, target_type: str = "sector") -> dict:
-    dates = recent_trade_dates(db, 7)
+def summary_report(db: Session, target_type: str = "sector", period: str = "3d") -> dict:
+    period = period if period in REPORT_PERIODS else "3d"
+    date_selection = _report_dates(db, target_type, period)
+    dates = date_selection["dates"]
     if not dates:
         return {
             "trade_date": None,
             "target_type": target_type,
+            "period": period,
+            "period_label": REPORT_PERIODS[period]["label"],
             "date_start": None,
             "date_end": None,
             "days": 0,
+            "expected_days": date_selection["expected_days"],
+            "dates": [],
             "metric_note": _volume_metric_note(),
             "items": [],
             "data_quality": "missing",
@@ -47,29 +63,37 @@ def summary_report(db: Session, target_type: str = "sector") -> dict:
     daily_volume = daily_rank(db, latest_date, target_type, "volume", 1)
     daily_turnover = daily_rank(db, latest_date, target_type, "turnover", 1)
     cumulative_rows = _cumulative_rows(db, dates, target_type)
-    seven_day_volume = _top_cumulative(cumulative_rows, "volume")
-    seven_day_turnover = _top_cumulative(cumulative_rows, "turnover")
+    period_volume = _top_cumulative(cumulative_rows, "volume")
+    period_turnover = _top_cumulative(cumulative_rows, "turnover")
     quality_rows = [
         item
         for item in [
             *(daily_volume.get("items") or []),
             *(daily_turnover.get("items") or []),
-            seven_day_volume,
-            seven_day_turnover,
+            period_volume,
+            period_turnover,
         ]
         if item
     ]
+    period_label = REPORT_PERIODS[period]["label"]
+    range_label = _date_range_label(dates)
     return {
         "trade_date": latest_date,
         "target_type": target_type,
+        "period": period,
+        "period_label": period_label,
         "date_start": min(dates),
         "date_end": max(dates),
         "days": len(dates),
+        "expected_days": date_selection["expected_days"],
+        "dates": dates,
+        "complete_day_min_targets": date_selection["complete_day_min_targets"],
+        "available_complete_days": date_selection["available_complete_days"],
         "metric_note": _volume_metric_note(),
         "items": [
             {
                 "key": "today_volume",
-                "title": "今日最大买入量",
+                "title": "当日最大买入量",
                 "metric": "volume",
                 "metric_label": "成交量",
                 "period_label": latest_date,
@@ -77,30 +101,30 @@ def summary_report(db: Session, target_type: str = "sector") -> dict:
             },
             {
                 "key": "today_turnover",
-                "title": "今日最大成交额",
+                "title": "当日最大成交额",
                 "metric": "turnover",
                 "metric_label": "成交额",
                 "period_label": latest_date,
                 "item": _first_item(daily_turnover),
             },
             {
-                "key": "seven_day_volume",
-                "title": "7日累计最大买入量",
+                "key": "period_volume",
+                "title": f"{period_label}累计最大买入量",
                 "metric": "volume",
                 "metric_label": "累计成交量",
-                "period_label": f"{min(dates)} ~ {max(dates)}",
-                "item": seven_day_volume,
+                "period_label": range_label,
+                "item": period_volume,
             },
             {
-                "key": "seven_day_turnover",
-                "title": "7日累计最大成交额",
+                "key": "period_turnover",
+                "title": f"{period_label}累计最大成交额",
                 "metric": "turnover",
                 "metric_label": "累计成交额",
-                "period_label": f"{min(dates)} ~ {max(dates)}",
-                "item": seven_day_turnover,
+                "period_label": range_label,
+                "item": period_turnover,
             },
         ],
-        "data_quality": _dict_quality(quality_rows),
+        "data_quality": _report_quality(quality_rows, len(dates), date_selection["expected_days"]),
     }
 
 
@@ -154,7 +178,60 @@ def weekly_rank(
 
 
 def _volume_metric_note() -> str:
-    return "当前免费行情源没有逐笔主动买入字段，买入量按成交量口径展示。"
+    return "当前免费行情源没有逐笔主动买入字段，买入量按成交量口径展示；累计只使用完整板块交易日。"
+
+
+def _report_dates(db: Session, target_type: str, period: str) -> dict:
+    counts = _target_counts_by_date(db, target_type)
+    if not counts:
+        return {
+            "dates": [],
+            "expected_days": REPORT_PERIODS[period]["days"] or 0,
+            "complete_day_min_targets": 0,
+            "available_complete_days": 0,
+        }
+    max_targets = max(count for _, count in counts)
+    min_targets = max(1, ceil(max_targets * COMPLETE_DAY_RATIO))
+    complete_dates = [trade_date for trade_date, count in counts if count >= min_targets]
+    if period == "week":
+        selected = _week_dates(complete_dates)
+        expected_days = len(selected)
+    else:
+        expected_days = int(REPORT_PERIODS[period]["days"])
+        selected = complete_dates[:expected_days]
+    return {
+        "dates": selected,
+        "expected_days": expected_days,
+        "complete_day_min_targets": min_targets,
+        "available_complete_days": len(complete_dates),
+    }
+
+
+def _target_counts_by_date(db: Session, target_type: str) -> list[tuple[str, int]]:
+    rows = db.execute(
+        select(DailyAggregate.trade_date, func.count(func.distinct(DailyAggregate.target_code)))
+        .where(DailyAggregate.target_type == target_type)
+        .group_by(DailyAggregate.trade_date)
+        .order_by(DailyAggregate.trade_date.desc())
+    ).all()
+    return [(trade_date, int(count)) for trade_date, count in rows]
+
+
+def _week_dates(desc_dates: list[str]) -> list[str]:
+    if not desc_dates:
+        return []
+    latest = datetime.strptime(desc_dates[0], "%Y-%m-%d").date()
+    week_start = latest - timedelta(days=latest.weekday())
+    week_end = week_start + timedelta(days=4)
+    return [value for value in desc_dates if week_start.isoformat() <= value <= week_end.isoformat()]
+
+
+def _date_range_label(dates: list[str]) -> str:
+    if not dates:
+        return "-"
+    start = min(dates)
+    end = max(dates)
+    return start if start == end else f"{start} ~ {end}"
 
 
 def _first_item(payload: dict) -> Optional[dict]:
@@ -242,6 +319,12 @@ def _dict_quality(rows: list[dict]) -> str:
     if len(qualities) == 1:
         return next(iter(qualities))
     return "partial"
+
+
+def _report_quality(rows: list[dict], actual_days: int, expected_days: int) -> str:
+    if expected_days and actual_days < expected_days:
+        return "partial"
+    return _dict_quality(rows)
 
 
 def _merge_dict_quality(qualities: set[str], missing_days: int) -> str:

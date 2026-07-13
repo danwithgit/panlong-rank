@@ -24,6 +24,11 @@
             <h2 id="summaryReportTitle">交易强度报表</h2>
             <span class="meta" id="summaryReportMeta">按板块统计</span>
           </div>
+          <div class="report-controls" id="summaryPeriodTabs" aria-label="报表周期">
+            <button class="active" data-report-period="3d">近3交易日</button>
+            <button data-report-period="5d">近5交易日</button>
+            <button data-report-period="week">本周</button>
+          </div>
         </div>
         <div class="report-grid" id="summaryReportRows"></div>
       </section>
@@ -175,6 +180,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260713-1"></script>
+    <script src="/static/app.js?v=20260713-2"></script>
   </body>
 </html>

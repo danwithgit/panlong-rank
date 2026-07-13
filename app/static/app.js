@@ -44,6 +44,7 @@ let state = {
   weeklyOptions: [],
   dailyDate: null,
   weeklyRange: null,
+  reportPeriod: "3d",
   dataSource: "unknown",
   fundAvailable: false,
   refreshTimer: null,
@@ -243,8 +244,10 @@ function renderHistoryRows(selector, items) {
 
 function renderSummaryReport(data) {
   const items = data.items || [];
+  renderSummaryPeriodTabs();
+  const usedDays = data.expected_days ? `${data.days}/${data.expected_days}` : `${data.days}`;
   const meta = data.days
-    ? `${data.date_start || "-"} ~ ${data.date_end || "-"} / ${qualityLabel(data.data_quality)} / ${data.metric_note || ""}`
+    ? `${data.period_label || "报表"} / ${data.date_start || "-"} ~ ${data.date_end || "-"} / 完整交易日 ${usedDays} / ${qualityLabel(data.data_quality)} / ${data.metric_note || ""}`
     : data.metric_note || "暂无报表数据";
   document.querySelector("#summaryReportMeta").textContent = meta;
   document.querySelector("#summaryReportRows").innerHTML = items.length
@@ -274,6 +277,12 @@ function summaryReportCard(card) {
         <span class="quality ${escapeText(quality)}">${escapeText(qualityText)}</span>
       </div>
     </article>`;
+}
+
+function renderSummaryPeriodTabs() {
+  document.querySelectorAll("#summaryPeriodTabs button[data-report-period]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.reportPeriod === state.reportPeriod);
+  });
 }
 
 function historyRow(item) {
@@ -423,7 +432,7 @@ async function loadBoardDetail(boardCode, boardName = "", seq = state.requestSeq
 
 async function refreshHistory(seq = state.requestSeq) {
   const [summary, days, weeks] = await Promise.all([
-    fetchJson("/api/report/summary?target_type=sector"),
+    fetchJson(`/api/report/summary?target_type=sector&period=${encodeURIComponent(state.reportPeriod)}`),
     fetchJson("/api/history/days?limit=7"),
     fetchJson("/api/history/weeks?limit=4"),
   ]);
@@ -434,6 +443,13 @@ async function refreshHistory(seq = state.requestSeq) {
   renderDailyOptions();
   renderWeeklyOptions();
   await Promise.all([refreshDailyRank(seq), refreshWeeklyRank(seq), refreshCompare(seq)]);
+}
+
+async function refreshSummaryReport(seq = state.requestSeq) {
+  renderSummaryPeriodTabs();
+  const data = await fetchJson(`/api/report/summary?target_type=sector&period=${encodeURIComponent(state.reportPeriod)}`);
+  if (seq !== state.requestSeq) return;
+  renderSummaryReport(data);
 }
 
 async function refreshDailyRank(seq = state.requestSeq) {
@@ -496,6 +512,13 @@ document.querySelector("#weeklyDateSelect").addEventListener("change", async (ev
   await refreshWeeklyRank(state.requestSeq);
 });
 
+document.querySelectorAll("#summaryPeriodTabs button[data-report-period]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    state.reportPeriod = button.dataset.reportPeriod || "3d";
+    await refreshSummaryReport(state.requestSeq).catch(renderError);
+  });
+});
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     if (state.refreshTimer) {
@@ -509,4 +532,5 @@ document.addEventListener("visibilitychange", () => {
 
 window.addEventListener("focus", () => refreshDashboard({ force: true }));
 
+renderSummaryPeriodTabs();
 refreshDashboard({ force: true });

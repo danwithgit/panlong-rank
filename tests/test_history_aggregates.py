@@ -180,20 +180,11 @@ def test_history_rank_change_metric_orders_by_change_percent_desc():
     assert [item["change_percent"] for item in weekly["items"]] == [8.6, 3.4, -2.1]
 
 
-def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
+def test_summary_report_uses_latest_complete_trading_days_for_cumulative_metrics():
     db = _db()
     now = datetime(2026, 7, 13, 15, 0, 0)
-    for index, trade_date in enumerate(
-        [
-            "2026-07-03",
-            "2026-07-06",
-            "2026-07-07",
-            "2026-07-08",
-            "2026-07-09",
-            "2026-07-10",
-            "2026-07-13",
-        ]
-    ):
+    complete_dates = ["2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-13"]
+    for index, trade_date in enumerate(complete_dates):
         db.add(
             DailyAggregate(
                 trade_date=trade_date,
@@ -205,7 +196,7 @@ def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
                 high_price=0,
                 low_price=0,
                 change_percent=0.5,
-                volume=1000,
+                volume=3000,
                 turnover=100,
                 fund_amount=0,
                 snapshot_time=now + timedelta(days=index),
@@ -244,11 +235,31 @@ def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
                 low_price=0,
                 change_percent=1,
                 volume=100,
-                turnover=2000,
+                turnover=4000,
                 fund_amount=0,
                 snapshot_time=now + timedelta(days=index),
                 data_source="test",
                 data_quality="live",
+            )
+        )
+    for index, trade_date in enumerate(["2026-07-03", "2026-07-06"], start=10):
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code="partial_big",
+                target_name="残缺高量板块",
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=10,
+                volume=999999,
+                turnover=999999,
+                fund_amount=0,
+                snapshot_time=now + timedelta(days=index),
+                data_source="test",
+                data_quality="partial",
             )
         )
     db.commit()
@@ -257,15 +268,66 @@ def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
     items = {item["key"]: item for item in report["items"]}
 
     assert report["trade_date"] == "2026-07-13"
-    assert report["days"] == 7
+    assert report["period"] == "3d"
+    assert report["days"] == 3
+    assert report["expected_days"] == 3
+    assert report["dates"] == ["2026-07-13", "2026-07-10", "2026-07-09"]
     assert "按成交量口径" in report["metric_note"]
     assert items["today_volume"]["item"]["target_code"] == "today_hot"
     assert items["today_turnover"]["item"]["target_code"] == "today_hot"
-    assert items["seven_day_volume"]["item"]["target_code"] == "steady"
-    assert items["seven_day_volume"]["item"]["volume"] == 7000
-    assert items["seven_day_volume"]["item"]["data_source"] == "fallback+test"
-    assert items["seven_day_turnover"]["item"]["target_code"] == "turnover_week"
-    assert items["seven_day_turnover"]["item"]["turnover"] == 14000
+    assert items["period_volume"]["item"]["target_code"] == "steady"
+    assert items["period_volume"]["item"]["volume"] == 9000
+    assert items["period_volume"]["item"]["data_source"] == "fallback+test"
+    assert items["period_turnover"]["item"]["target_code"] == "turnover_week"
+    assert items["period_turnover"]["item"]["turnover"] == 12000
+
+    five_day_report = summary_report(db, "sector", "5d")
+    five_day_items = {item["key"]: item for item in five_day_report["items"]}
+
+    assert five_day_report["days"] == 5
+    assert five_day_report["dates"] == ["2026-07-13", "2026-07-10", "2026-07-09", "2026-07-08", "2026-07-07"]
+    assert five_day_items["period_volume"]["item"]["target_code"] == "steady"
+    assert five_day_items["period_volume"]["item"]["volume"] == 15000
+    assert five_day_items["period_turnover"]["item"]["target_code"] == "turnover_week"
+    assert five_day_items["period_turnover"]["item"]["turnover"] == 20000
+    assert "partial_big" not in {item["item"]["target_code"] for item in five_day_report["items"] if item["item"]}
+
+
+def test_summary_report_week_uses_current_complete_calendar_week():
+    db = _db()
+    now = datetime(2026, 7, 13, 15, 0, 0)
+    for trade_date in ["2026-07-10", "2026-07-13"]:
+        for code, name, volume, turnover in [
+            ("a", "板块A", 100, 1000),
+            ("b", "板块B", 200, 2000),
+        ]:
+            db.add(
+                DailyAggregate(
+                    trade_date=trade_date,
+                    target_type="sector",
+                    target_code=code,
+                    target_name=name,
+                    open_price=0,
+                    close_price=0,
+                    high_price=0,
+                    low_price=0,
+                    change_percent=1,
+                    volume=volume,
+                    turnover=turnover,
+                    fund_amount=0,
+                    snapshot_time=now,
+                    data_source="test",
+                    data_quality="live",
+                )
+            )
+    db.commit()
+
+    report = summary_report(db, "sector", "week")
+
+    assert report["period"] == "week"
+    assert report["period_label"] == "本周"
+    assert report["dates"] == ["2026-07-13"]
+    assert report["days"] == 1
 
 
 def test_history_api_defaults_to_change_metric():
