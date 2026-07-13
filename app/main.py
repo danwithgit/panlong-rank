@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hmac
+import logging
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -35,6 +37,8 @@ from app.services.ranking_service import (
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.snapshot_store import has_snapshots, latest_snapshot
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,10 +47,10 @@ async def lifespan(app: FastAPI):
     if settings.collect_on_startup:
         db = SessionLocal()
         try:
-            if not has_snapshots(db):
+            if _should_collect_on_startup(db, settings):
                 collect_market_snapshot(db, settings, force=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("startup collection failed: %s", exc)
         finally:
             db.close()
     start_scheduler(settings)
@@ -56,6 +60,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Panlong Rank", version="0.2.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+def require_admin(
+    settings: Settings = Depends(get_settings),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> None:
+    if not settings.admin_api_token:
+        raise HTTPException(status_code=503, detail="admin API is disabled")
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, settings.admin_api_token):
+        raise HTTPException(status_code=401, detail="invalid admin token")
 
 
 @app.get("/")
@@ -84,6 +98,7 @@ def health(settings: Settings = Depends(get_settings), db: Session = Depends(get
 @app.post("/api/admin/collect")
 def collect_now(
     force: bool = Query(default=False),
+    _: None = Depends(require_admin),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -98,7 +113,11 @@ def collect_now(
 
 
 @app.get("/api/admin/job-logs")
-def job_logs(limit: int = Query(default=20, ge=1, le=200), db: Session = Depends(get_db)):
+def job_logs(
+    limit: int = Query(default=20, ge=1, le=200),
+    _: None = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rows = db.scalars(select(JobLog).order_by(JobLog.started_at.desc(), JobLog.id.desc()).limit(limit)).all()
     return {
         "items": [
@@ -119,6 +138,7 @@ def job_logs(limit: int = Query(default=20, ge=1, le=200), db: Session = Depends
 @app.post("/api/admin/backfill/run")
 def run_backfill_now(
     seed: bool = Query(default=True),
+    _: None = Depends(require_admin),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -413,6 +433,12 @@ def _safe_database_url(database_url: str) -> str:
 
 def _is_sample_source(data_source: str) -> bool:
     return data_source.startswith("sample") or "sample" in data_source
+
+
+def _should_collect_on_startup(db: Session, settings: Settings) -> bool:
+    status = get_trading_status(settings)
+    snapshot = snapshot_for_timeframe_with_settings(db, status, settings, Timeframe.realtime)
+    return snapshot is None
 
 
 def _parse_period(period: str) -> Timeframe:

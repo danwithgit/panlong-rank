@@ -45,6 +45,8 @@ class StockSnapshot(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     stock_code: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
     stock_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sector_code: Mapped[Optional[str]] = mapped_column(String(24), index=True, nullable=True)
+    sector_name: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     current_price: Mapped[float] = mapped_column(Float, nullable=False)
     change_percent: Mapped[float] = mapped_column(Float, nullable=False)
     change_value: Mapped[float] = mapped_column(Float, default=0, nullable=False)
@@ -75,6 +77,17 @@ class SectorSnapshot(Base):
     snapshot_time: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
     trade_date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
     data_source: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class StockUniverse(Base, TimestampMixin):
+    __tablename__ = "stock_universe"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(24), unique=True, index=True, nullable=False)
+    stock_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), index=True, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    last_seen_date: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
 
 
 class StockSectorMap(Base, TimestampMixin):
@@ -176,6 +189,8 @@ class WeeklyAggregate(Base):
     turnover: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     fund_amount: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     trading_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expected_trading_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    missing_trading_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     data_source: Mapped[str] = mapped_column(String(40), nullable=False)
     data_quality: Mapped[str] = mapped_column(String(24), index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

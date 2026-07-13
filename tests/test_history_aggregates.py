@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
-from app.db.tables import DailyAggregate, IndexSnapshot, SectorSnapshot, StockSectorMap, StockSnapshot, WeeklyAggregate
+from app.db.tables import DailyAggregate, IndexSnapshot, SectorSnapshot, StockSectorMap, StockSnapshot, TradingCalendar, WeeklyAggregate
 from app.services.aggregates import rebuild_daily_aggregate, rebuild_recent_weekly_aggregates
 from app.services.history_rankings import compare_daily, daily_rank, recent_daily_options, recent_weekly_options, weekly_rank
 
@@ -91,7 +91,7 @@ def test_daily_weekly_aggregates_and_history_queries():
 
     assert [item["trade_date"] for item in recent_daily_options(db, 2)] == ["2026-07-03", "2026-07-02"]
     weeks = recent_weekly_options(db, 1)
-    assert weeks == [{"week_start": "2026-07-01", "week_end": "2026-07-03", "label": "2026-07-01 ~ 2026-07-03"}]
+    assert weeks == [{"week_start": "2026-06-29", "week_end": "2026-07-03", "label": "2026-06-29 ~ 2026-07-03"}]
 
     daily = daily_rank(db, None, "sector", "turnover", 10)
     assert daily["trade_date"] == "2026-07-03"
@@ -185,6 +185,37 @@ def test_history_api_defaults_to_change_metric():
     assert weekly_metric.default == "change"
 
 
+def test_compare_daily_returns_actual_selected_date_when_requested_date_missing():
+    db = _db()
+    now = datetime(2026, 7, 10, 15, 0, 0)
+    for trade_date, turnover in [("2026-07-10", 1000), ("2026-07-09", 800)]:
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code="sector_test",
+                target_name="测试板块",
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=1,
+                volume=turnover / 10,
+                turnover=turnover,
+                fund_amount=0,
+                snapshot_time=now,
+                data_source="test",
+                data_quality="live",
+            )
+        )
+    db.commit()
+
+    result = compare_daily(db, "sector", "sector_test", "2099-01-01", days=2)
+
+    assert result["trade_date"] == "2026-07-10"
+    assert [item["trade_date"] for item in result["items"]] == ["2026-07-10", "2026-07-09"]
+
+
 def test_weekly_sector_change_compounds_daily_change_when_prices_missing():
     db = _db()
     now = datetime(2026, 7, 6, 15, 0, 0)
@@ -217,7 +248,7 @@ def test_weekly_sector_change_compounds_daily_change_when_prices_missing():
     rebuild_recent_weekly_aggregates(db, max_weeks=1)
     db.commit()
 
-    weekly = weekly_rank(db, "2026-07-06", "2026-07-07", "sector", "change", 10)
+    weekly = weekly_rank(db, "2026-07-06", "2026-07-10", "sector", "change", 10)
 
     assert [item["target_code"] for item in weekly["items"][:2]] == ["strong_then_small", "last_day_only"]
     assert weekly["items"][0]["change_percent"] == 8.54
@@ -244,3 +275,44 @@ def test_recent_weekly_rebuild_sees_uncommitted_daily_rows():
 
     assert rows == 3
     assert db.scalar(select(WeeklyAggregate.id)) is not None
+
+
+def test_weekly_quality_is_partial_when_expected_trade_day_missing():
+    db = _db()
+    for value in ["2026-07-06", "2026-07-07"]:
+        db.add(
+            TradingCalendar(
+                trade_date=value,
+                is_open=True,
+                pretrade_date="2026-07-03",
+            )
+        )
+    db.add(
+        DailyAggregate(
+            trade_date="2026-07-06",
+            target_type="sector",
+            target_code="sector_one_day",
+            target_name="只有一天",
+            open_price=0,
+            close_price=0,
+            high_price=0,
+            low_price=0,
+            change_percent=5,
+            volume=100,
+            turnover=1000,
+            fund_amount=0,
+            snapshot_time=datetime(2026, 7, 6, 15, 0, 0),
+            data_source="test",
+            data_quality="live",
+        )
+    )
+
+    rebuild_recent_weekly_aggregates(db, max_weeks=1)
+    db.commit()
+
+    weekly = weekly_rank(db, "2026-07-06", "2026-07-10", "sector", "change", 10)
+
+    assert weekly["data_quality"] == "partial"
+    assert weekly["items"][0]["trading_days"] == 1
+    assert weekly["items"][0]["expected_trading_days"] == 2
+    assert weekly["items"][0]["missing_trading_days"] == 1

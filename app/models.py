@@ -109,6 +109,8 @@ class RankingBlock(BaseModel):
     key: str
     title: str
     metric: str
+    metric_available: bool = True
+    quality_note: Optional[str] = None
     items: list[RankingItem] = Field(default_factory=list)
 
 

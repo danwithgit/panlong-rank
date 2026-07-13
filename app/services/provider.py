@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+import re
 import signal
 import threading
 import time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 
 from app.config import Settings
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
@@ -28,21 +30,38 @@ class SampleMarketDataProvider(MarketDataProvider):
 
 
 class AkshareMarketDataProvider(MarketDataProvider):
-    def __init__(self, sina_detail_board_limit: int = 16, call_timeout_seconds: float = 5) -> None:
+    def __init__(
+        self,
+        sina_detail_board_limit: int = 16,
+        call_timeout_seconds: float = 5,
+        tencent_batch_size: int = 500,
+        tencent_batch_delay_seconds: float = 0.2,
+        tencent_request_timeout_seconds: int = 15,
+        min_realtime_stock_count: int = 4000,
+        min_stock_coverage_ratio: float = 0.9,
+        http_get=None,
+    ) -> None:
         self.sina_detail_board_limit = max(1, sina_detail_board_limit)
         self.call_timeout_seconds = max(0.1, call_timeout_seconds)
+        self.tencent_batch_size = max(1, min(500, tencent_batch_size))
+        self.tencent_batch_delay_seconds = max(0, tencent_batch_delay_seconds)
+        self.tencent_request_timeout_seconds = max(1, tencent_request_timeout_seconds)
+        self.min_realtime_stock_count = max(1, min_realtime_stock_count)
+        self.min_stock_coverage_ratio = min(1, max(0.1, min_stock_coverage_ratio))
+        self.http_get = http_get or requests.get
+        self.stock_universe: dict[str, str] = {}
+        self.stock_sector_mappings: dict[str, list[tuple[str, str]]] = {}
+
+    def configure_stock_context(
+        self,
+        stock_universe: dict[str, str],
+        stock_sector_mappings: dict[str, list[tuple[str, str]]],
+    ) -> None:
+        self.stock_universe = stock_universe
+        self.stock_sector_mappings = stock_sector_mappings
 
     def snapshot(self, trading_status: TradingStatus) -> MarketSnapshot:
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                return self._snapshot_once(trading_status)
-            except Exception as exc:
-                last_error = exc
-                logger.warning("AKShare snapshot attempt %s failed: %s", attempt, exc)
-                time.sleep(0.5 * attempt)
-        logger.error("AKShare unavailable after retries: %s", last_error)
-        raise RuntimeError(f"AKShare unavailable after retries: {last_error}") from last_error
+        return self._snapshot_once(trading_status)
 
     def _snapshot_once(self, trading_status: TradingStatus, ak=None) -> MarketSnapshot:
         if ak is None:
@@ -91,6 +110,11 @@ class AkshareMarketDataProvider(MarketDataProvider):
         raise RuntimeError(f"All AKShare {label} providers failed: {'; '.join(errors)}")
 
     def _stock_quote_candidates(self, ak, boards: list[BoardQuote], source_parts: list[str]):
+        if self.stock_universe:
+            return [
+                ("tencent_realtime", lambda: self._stock_quotes_qq(boards)),
+                ("akshare_sina", lambda: self._stock_quotes_sina(ak, boards)),
+            ]
         has_em_board_codes = any(board.code.startswith("BK") for board in boards)
         if not has_em_board_codes and "akshare_sina" in source_parts:
             return [("akshare_sina", lambda: self._stock_quotes_sina(ak, boards))]
@@ -161,7 +185,7 @@ class AkshareMarketDataProvider(MarketDataProvider):
                     change_percent=_num(row, ["涨跌幅"]),
                     volume=_num(row, ["成交量"]),
                     amount=_num(row, ["成交额"]),
-                    capital_flow=_num(row, ["主力净流入", "资金净流入", "净流入"]) or _num(row, ["成交额"]),
+                    capital_flow=_num(row, ["主力净流入", "资金净流入", "净流入"]),
                     leader_stock_code=str(_value(row, ["领涨股票代码", "领涨股代码"], "")) or None,
                     leader_stock_name=str(_value(row, ["领涨股票", "领涨股"], "")) or None,
                     updated_at=now,
@@ -184,7 +208,7 @@ class AkshareMarketDataProvider(MarketDataProvider):
                     change_percent=_num(row, ["涨跌幅", "changepercent"]),
                     volume=_num(row, ["总成交量", "成交量", "volume"]),
                     amount=amount,
-                    capital_flow=amount,
+                    capital_flow=0,
                     leader_stock_code=None,
                     leader_stock_name=None,
                     updated_at=now,
@@ -213,7 +237,7 @@ class AkshareMarketDataProvider(MarketDataProvider):
                         change_percent=_num(row, ["涨跌幅"]),
                         volume=_num(row, ["成交量"]),
                         amount=amount,
-                        capital_flow=_num(row, ["主力净流入", "资金净流入"]) or amount,
+                        capital_flow=_num(row, ["主力净流入", "资金净流入"]),
                         updated_at=now,
                     )
                 )
@@ -223,6 +247,72 @@ class AkshareMarketDataProvider(MarketDataProvider):
         now = datetime.now(CN_TZ)
         selected_boards = sorted(boards, key=lambda board: board.amount, reverse=True)[: self.sina_detail_board_limit]
         return self._sina_sector_detail_quotes(ak, selected_boards, now)
+
+    def _stock_quotes_qq(self, boards: list[BoardQuote]) -> list[StockQuote]:
+        board_names = {board.code: board.name for board in boards}
+        raw_quotes: dict[str, StockQuote] = {}
+        codes = list(self.stock_universe)
+        for batch_index, batch in enumerate(_chunks(codes, self.tencent_batch_size)):
+            symbols = [_quote_symbol(code) for code in batch]
+            url = "https://qt.gtimg.cn/q=" + ",".join(symbols)
+            last_error = None
+            for attempt in range(2):
+                try:
+                    response = self.http_get(
+                        url,
+                        timeout=self.tencent_request_timeout_seconds,
+                        headers={"Referer": "https://gu.qq.com/", "User-Agent": "PanlongRank/1.0"},
+                    )
+                    response.raise_for_status()
+                    text = response.content.decode("gbk", errors="replace")
+                    parsed = _parse_qq_quotes(text, datetime.now(CN_TZ))
+                    if not parsed:
+                        raise RuntimeError("empty Tencent quote batch")
+                    raw_quotes.update({item.code: item for item in parsed})
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt == 0:
+                        time.sleep(0.5)
+            if last_error is not None:
+                raise RuntimeError(f"Tencent quote batch {batch_index + 1} failed: {last_error}") from last_error
+            if batch_index + 1 < (len(codes) + self.tencent_batch_size - 1) // self.tencent_batch_size:
+                time.sleep(self.tencent_batch_delay_seconds)
+
+        expected = len(codes)
+        received = len(raw_quotes)
+        required = min(expected, self.min_realtime_stock_count)
+        if received < required or received / expected < self.min_stock_coverage_ratio:
+            raise RuntimeError(f"Tencent stock coverage too low: {received}/{expected}")
+
+        stocks: list[StockQuote] = []
+        stocks_by_board: dict[str, list[StockQuote]] = {}
+        for code, quote in raw_quotes.items():
+            mappings = [
+                (sector_code, board_names[sector_code])
+                for sector_code, _ in self.stock_sector_mappings.get(code, [])
+                if sector_code in board_names
+            ]
+            if not mappings:
+                stocks.append(quote)
+                continue
+            primary_sector_code, primary_sector_name = mappings[0]
+            stocks.append(
+                quote.model_copy(update={"board_code": primary_sector_code, "board_name": primary_sector_name})
+            )
+            for sector_code, sector_name in mappings:
+                mapped = quote.model_copy(update={"board_code": sector_code, "board_name": sector_name})
+                stocks_by_board.setdefault(sector_code, []).append(mapped)
+
+        for board in boards:
+            candidates = stocks_by_board.get(board.code, [])
+            if not candidates:
+                continue
+            leader = max(candidates, key=lambda stock: (stock.change_percent, stock.amount))
+            board.leader_stock_code = leader.code
+            board.leader_stock_name = leader.name
+        return stocks
 
     def _sina_sector_detail_quotes(
         self,
@@ -267,6 +357,11 @@ def get_provider(settings: Settings) -> MarketDataProvider:
         return AkshareMarketDataProvider(
             sina_detail_board_limit=settings.sina_detail_board_limit,
             call_timeout_seconds=settings.provider_call_timeout_seconds,
+            tencent_batch_size=settings.tencent_batch_size,
+            tencent_batch_delay_seconds=settings.tencent_batch_delay_seconds,
+            tencent_request_timeout_seconds=settings.tencent_request_timeout_seconds,
+            min_realtime_stock_count=settings.min_realtime_stock_count,
+            min_stock_coverage_ratio=settings.min_stock_coverage_ratio,
         )
     raise ValueError(f"Unsupported DATA_PROVIDER: {settings.data_provider}")
 
@@ -308,7 +403,7 @@ def _stock_quotes_from_sector_detail(df: pd.DataFrame, board: BoardQuote, now: d
                 change_percent=_num(row, ["changepercent", "涨跌幅"]),
                 volume=_num(row, ["volume", "成交量"]),
                 amount=amount,
-                capital_flow=amount,
+                capital_flow=0,
                 updated_at=now,
             )
         )
@@ -380,3 +475,56 @@ def _normalize_code(value: str) -> str:
     if code.startswith(("sh", "sz", "bj")) and len(code) > 2:
         return code[2:]
     return code
+
+
+def _parse_qq_quotes(text: str, now: datetime) -> list[StockQuote]:
+    quotes: list[StockQuote] = []
+    for payload in re.findall(r'v_[^=]+="([^"]*)"', text):
+        values = payload.split("~")
+        if len(values) < 38:
+            continue
+        code = _normalize_code(values[2])
+        name = values[1].strip()
+        if not code or not name:
+            continue
+        current = _float(values[3]) or _float(values[4])
+        amount_parts = values[35].split("/") if len(values) > 35 else []
+        amount = _float(amount_parts[2]) if len(amount_parts) >= 3 else _float(values[37]) * 10000
+        quotes.append(
+            StockQuote(
+                code=code,
+                name=name,
+                board_code="",
+                board_name="",
+                price=current,
+                change_percent=_float(values[32]),
+                volume=_float(values[36]) * 100,
+                amount=amount,
+                capital_flow=0,
+                updated_at=now,
+            )
+        )
+    return quotes
+
+
+def _quote_symbol(stock_code: str) -> str:
+    code = stock_code.strip()
+    if code.startswith(("600", "601", "603", "605", "688", "689")):
+        return f"sh{code}"
+    if code.startswith(("000", "001", "002", "003", "300", "301")):
+        return f"sz{code}"
+    if code.startswith(("4", "8", "9")):
+        return f"bj{code}"
+    return code
+
+
+def _float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _chunks(values: list[str], size: int):
+    for index in range(0, len(values), size):
+        yield values[index : index + size]

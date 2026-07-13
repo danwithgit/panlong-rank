@@ -28,6 +28,12 @@
 - 已修复聚合稳定性问题：应用实际 Session 使用 `autoflush=False`，采集后必须在日聚合和周聚合前后显式 `flush`，否则同事务内会看不到刚写入的快照或聚合行。
 - 已改造历史回填：回填日期优先使用 AKShare/Sina 交易日历过滤；非交易日任务会标记为 `skipped`，避免把周末/节假日当成失败数据反复重试。
 - 已增加上证指数历史日线回填；个股历史日线可继续慢速回填；由回填个股聚合出的历史板块只标记为 `partial`，不能当作完整板块真实行情。
+- 已修正数据可靠性关键问题：
+  - 正式模式下 `sample` 快照不再作为可展示行情，也不会阻止启动采集真实数据。
+  - 个股快照保存当次板块归属，历史/当前还原不再依赖会变化的 `stock_sector_map`。
+  - 周聚合记录 `trading_days`、`expected_trading_days`、`missing_trading_days`；缺交易日时质量降级为 `partial`。
+  - 当前数据源没有真实资金流字段时，资金榜返回不可用，不再展示按 0 排序的伪榜。
+  - 历史对比传入无效日期时返回实际使用的最近可用日期。
 
 ## 关键文件
 
@@ -51,12 +57,16 @@
 
 ```text
 PYTHONPYCACHEPREFIX=/private/tmp/panlong-rank-pycache python3 -m pytest
-27 passed
+45 passed
 
 PYTHONPYCACHEPREFIX=/private/tmp/panlong-rank-pycache python3 -m compileall app
 passed
 
 node --check app/static/app.js
+passed
+
+DATABASE_URL=sqlite:////private/tmp/panlong-rank-migration-test-2.sqlite3 \
+  PYTHONPYCACHEPREFIX=/private/tmp/panlong-rank-pycache python3 -m alembic upgrade head
 passed
 ```
 

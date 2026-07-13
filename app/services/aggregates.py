@@ -4,10 +4,18 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.db.tables import DailyAggregate, IndexSnapshot, SectorSnapshot, StockSectorMap, StockSnapshot, WeeklyAggregate
+from app.db.tables import (
+    DailyAggregate,
+    IndexSnapshot,
+    SectorSnapshot,
+    StockSectorMap,
+    StockSnapshot,
+    TradingCalendar,
+    WeeklyAggregate,
+)
 
 QUALITY_LIVE = "live"
 QUALITY_BACKFILLED = "backfilled"
@@ -77,15 +85,12 @@ def rebuild_daily_aggregate(db: Session, trade_date: str, data_quality: str = QU
         )
         rows += 1
 
-    stock_rows = db.execute(
-        select(StockSnapshot, StockSectorMap)
-        .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
-        .join(StockSectorMap, StockSnapshot.stock_code == StockSectorMap.stock_code)
-        .order_by(StockSnapshot.stock_code, StockSectorMap.sector_code)
-    ).all()
+    stock_rows = _stock_rows_for_daily(db, trade_date, snapshot_time)
     seen: set[tuple[str, str]] = set()
-    for stock, mapping in stock_rows:
-        key = (stock.stock_code, mapping.sector_code)
+    for stock, sector_code, sector_name in stock_rows:
+        if not sector_code:
+            continue
+        key = (stock.stock_code, sector_code)
         if key in seen:
             continue
         seen.add(key)
@@ -95,8 +100,8 @@ def rebuild_daily_aggregate(db: Session, trade_date: str, data_quality: str = QU
                 target_type="stock",
                 target_code=stock.stock_code,
                 target_name=stock.stock_name,
-                sector_code=mapping.sector_code,
-                sector_name=mapping.sector_name,
+                sector_code=sector_code,
+                sector_name=sector_name,
                 open_price=stock.open_price or stock.current_price,
                 close_price=stock.current_price,
                 high_price=stock.high_price or stock.current_price,
@@ -128,6 +133,8 @@ def rebuild_recent_weekly_aggregates(db: Session, max_weeks: int = 4) -> int:
 
 
 def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int:
+    expected_days = _expected_trade_dates(db, week_start, week_end)
+    expected_count = len(expected_days)
     daily_rows = list(
         db.scalars(
             select(DailyAggregate)
@@ -138,7 +145,7 @@ def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int
     if not daily_rows:
         return 0
 
-    db.execute(delete(WeeklyAggregate).where(WeeklyAggregate.week_start == week_start, WeeklyAggregate.week_end == week_end))
+    db.execute(delete(WeeklyAggregate).where(WeeklyAggregate.week_start == week_start))
     grouped: dict[tuple[str, str, Optional[str]], list[DailyAggregate]] = defaultdict(list)
     for row in daily_rows:
         grouped[(row.target_type, row.target_code, row.sector_code)].append(row)
@@ -147,7 +154,9 @@ def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int
     for _, items in grouped.items():
         first = items[0]
         last = items[-1]
-        quality = _merge_quality(item.data_quality for item in items)
+        actual_days = len({item.trade_date for item in items})
+        missing_days = max(expected_count - actual_days, 0)
+        quality = _merge_quality((item.data_quality for item in items), missing_days=missing_days)
         db.add(
             WeeklyAggregate(
                 week_start=week_start,
@@ -165,7 +174,9 @@ def rebuild_weekly_aggregate(db: Session, week_start: str, week_end: str) -> int
                 volume=sum(item.volume for item in items),
                 turnover=sum(item.turnover for item in items),
                 fund_amount=sum(item.fund_amount for item in items),
-                trading_days=len({item.trade_date for item in items}),
+                trading_days=actual_days,
+                expected_trading_days=expected_count,
+                missing_trading_days=missing_days,
                 data_source="+".join(sorted({item.data_source for item in items})),
                 data_quality=quality,
             )
@@ -252,13 +263,65 @@ def _recent_week_ranges(desc_dates: list[str], max_weeks: int) -> list[tuple[str
         year, week, _ = datetime.strptime(value, "%Y-%m-%d").isocalendar()
         ranges[(year, week)].append(value)
     ordered = sorted(ranges.values(), key=lambda items: items[-1], reverse=True)[:max_weeks]
-    return [(items[0], items[-1]) for items in ordered]
+    return [_calendar_week_range(items) for items in ordered]
 
 
-def _merge_quality(values: Iterable[str]) -> str:
+def _stock_rows_for_daily(db: Session, trade_date: str, snapshot_time: datetime):
+    stocks = list(
+        db.scalars(
+            select(StockSnapshot)
+            .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
+            .order_by(StockSnapshot.stock_code, StockSnapshot.sector_code)
+        )
+    )
+    if any(stock.sector_code for stock in stocks):
+        return [(stock, stock.sector_code, stock.sector_name) for stock in stocks if stock.sector_code]
+    rows = db.execute(
+        select(StockSnapshot, StockSectorMap)
+        .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
+        .join(StockSectorMap, StockSnapshot.stock_code == StockSectorMap.stock_code)
+        .order_by(StockSnapshot.stock_code, StockSectorMap.sector_code)
+    ).all()
+    return [(stock, mapping.sector_code, mapping.sector_name) for stock, mapping in rows]
+
+
+def _calendar_week_range(items: list[str]) -> tuple[str, str]:
+    latest = datetime.strptime(items[-1], "%Y-%m-%d").date()
+    monday = latest - timedelta(days=latest.weekday())
+    friday = monday + timedelta(days=4)
+    today = datetime.utcnow().date()
+    if monday <= today <= friday:
+        friday = min(friday, today)
+    return monday.isoformat(), friday.isoformat()
+
+
+def _expected_trade_dates(db: Session, week_start: str, week_end: str) -> list[str]:
+    calendar_rows = list(
+        db.scalars(
+            select(TradingCalendar)
+            .where(TradingCalendar.trade_date >= week_start, TradingCalendar.trade_date <= week_end)
+            .order_by(TradingCalendar.trade_date.asc())
+        )
+    )
+    if calendar_rows:
+        return [row.trade_date for row in calendar_rows if row.is_open]
+    start = datetime.strptime(week_start, "%Y-%m-%d").date()
+    end = datetime.strptime(week_end, "%Y-%m-%d").date()
+    values = []
+    current = start
+    while current <= end:
+        if current.weekday() < 5:
+            values.append(current.isoformat())
+        current += timedelta(days=1)
+    return values
+
+
+def _merge_quality(values: Iterable[str], missing_days: int = 0) -> str:
     qualities = set(values)
     if QUALITY_MISSING in qualities:
         return QUALITY_MISSING
+    if missing_days > 0:
+        return QUALITY_PARTIAL
     if QUALITY_PARTIAL in qualities or len(qualities) > 1:
         return QUALITY_PARTIAL
     if QUALITY_BACKFILLED in qualities:

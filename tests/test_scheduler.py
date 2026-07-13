@@ -102,10 +102,51 @@ def test_scheduler_runs_jobs_immediately(monkeypatch):
     scheduler.start_scheduler(Settings(scheduler_enabled=True, backfill_enabled=True))
 
     try:
-        assert len(added_jobs) == 2
+        assert len(added_jobs) == 3
         collect_job = next(item for item in added_jobs if item[2]["id"] == "collect_market_snapshot")
         backfill_job = next(item for item in added_jobs if item[2]["id"] == "backfill_daily_history")
+        metadata_job = next(item for item in added_jobs if item[2]["id"] == "refresh_stock_metadata")
         assert collect_job[2].get("next_run_time") is not None
         assert backfill_job[2]["next_run_time"] > collect_job[2]["next_run_time"]
+        assert metadata_job[2]["next_run_time"] > collect_job[2]["next_run_time"]
     finally:
         scheduler.stop_scheduler()
+
+
+def test_scheduler_skips_collection_during_lunch(monkeypatch):
+    monkeypatch.setattr(
+        scheduler,
+        "get_trading_status",
+        lambda settings: TradingStatus(
+            is_trade_day=True,
+            trade_date="2026-07-10",
+            last_trade_date="2026-07-10",
+            session="lunch_break",
+        ),
+    )
+
+    class UnexpectedProcess:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("collection must not start during lunch")
+
+    monkeypatch.setattr(scheduler, "Process", UnexpectedProcess)
+    scheduler._scheduled_collect(Settings())
+
+
+def test_scheduler_skips_backfill_during_trading(monkeypatch):
+    monkeypatch.setattr(
+        scheduler,
+        "get_trading_status",
+        lambda settings: TradingStatus(
+            is_trade_day=True,
+            trade_date="2026-07-10",
+            last_trade_date="2026-07-10",
+            session="afternoon_trading",
+        ),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("backfill must not start while trading")),
+    )
+    scheduler._scheduled_backfill(Settings())

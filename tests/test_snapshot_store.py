@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
-from app.db.tables import IndexSnapshot
+from app.db.tables import IndexSnapshot, StockSectorMap
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
 from app.services.snapshot_store import save_snapshot, snapshot_for_period
 
@@ -230,3 +230,30 @@ def test_snapshot_for_period_rejects_large_collection_gap():
     )
 
     assert result is None
+
+
+def test_snapshot_restores_stock_sector_from_snapshot_not_current_mapping():
+    db = _db()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="morning_trading",
+    )
+    save_snapshot(db, _snapshot(datetime(2026, 7, 3, 9, 40), 100, 1000, 10), "sample")
+    db.add(
+        StockSectorMap(
+            stock_code="000001",
+            stock_name="测试股票",
+            sector_code="BK999",
+            sector_name="错误当前映射",
+            sector_type="industry",
+        )
+    )
+    db.commit()
+
+    result = snapshot_for_period(db, status, None, None)
+
+    assert [(item.code, item.board_code, item.board_name) for item in result.stocks] == [
+        ("000001", "BK001", "测试板块")
+    ]

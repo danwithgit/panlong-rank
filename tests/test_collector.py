@@ -8,6 +8,7 @@ from app.db.session import Base
 from app.db.tables import JobLog
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
 from app.services import collector
+import pytest
 
 
 def test_collector_does_not_hold_write_lock_while_provider_runs(monkeypatch, tmp_path):
@@ -41,9 +42,21 @@ def test_collector_does_not_hold_write_lock_while_provider_runs(monkeypatch, tmp
 
     db = session_factory()
     try:
-        collector.collect_market_snapshot(db, Settings(data_provider="akshare"), force=True)
+        collector.collect_market_snapshot(
+            db,
+            Settings(data_provider="akshare", collection_lock_path=str(tmp_path / "collect.lock")),
+            force=True,
+        )
     finally:
         db.close()
+
+
+def test_collection_lock_rejects_overlapping_collection(tmp_path):
+    path = str(tmp_path / "collect.lock")
+    with collector._collection_lock(path):
+        with pytest.raises(RuntimeError, match="already running"):
+            with collector._collection_lock(path):
+                pass
 
 
 def _snapshot(status: TradingStatus) -> MarketSnapshot:

@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import Settings
 from app.db.session import Base
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, Timeframe, TradingStatus
-from app.services.ranking_service import snapshot_for_timeframe_with_settings
+from app.services.ranking_service import build_single_rank, snapshot_for_timeframe_with_settings
 from app.services.snapshot_store import save_snapshot
 
 
@@ -92,6 +92,31 @@ def test_realtime_snapshot_rejects_stale_trade_session_data():
     assert snapshot is None
 
 
+def test_auto_provider_rejects_sample_snapshot():
+    db = _db()
+    at = datetime(2026, 7, 3, 14, 55, tzinfo=CN_TZ)
+    sample = _snapshot(at)
+    sample.data_source = "sample"
+    sample.index.data_source = "sample"
+    save_snapshot(db, sample, "sample")
+    db.commit()
+    status = TradingStatus(
+        is_trade_day=True,
+        trade_date="2026-07-03",
+        last_trade_date="2026-07-03",
+        session="closed",
+    )
+
+    snapshot = snapshot_for_timeframe_with_settings(
+        db,
+        status,
+        Settings(data_provider="auto", complete_day_min_snapshot_time="14:50"),
+        Timeframe.realtime,
+    )
+
+    assert snapshot is None
+
+
 def test_realtime_snapshot_allows_stale_non_trade_day_data():
     db = _db()
     stale_at = (datetime.now(CN_TZ) - timedelta(days=2)).replace(hour=15, minute=0, second=0, microsecond=0)
@@ -156,3 +181,14 @@ def test_closed_trade_day_allows_complete_late_snapshot():
     )
 
     assert snapshot is not None
+
+
+def test_fund_ranking_is_unavailable_when_all_fund_values_are_zero():
+    snapshot = _snapshot(datetime(2026, 7, 3, 14, 55, tzinfo=CN_TZ))
+    snapshot.boards[0].capital_flow = 0
+    snapshot.stocks[0].capital_flow = 0
+
+    block = build_single_rank(snapshot, Timeframe.realtime, "fund", "sector", 10)
+
+    assert block.metric_available is False
+    assert block.items == []

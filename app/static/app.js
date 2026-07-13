@@ -44,6 +44,8 @@ let state = {
   weeklyOptions: [],
   dailyDate: null,
   weeklyRange: null,
+  dataSource: "unknown",
+  fundAvailable: false,
   refreshTimer: null,
   loading: false,
   lastTradingStatus: null,
@@ -61,6 +63,11 @@ function formatLarge(value) {
   if (abs >= 100000000) return `${moneyFormatter.format(number / 100000000)}亿`;
   if (abs >= 10000) return `${moneyFormatter.format(number / 10000)}万`;
   return moneyFormatter.format(number);
+}
+
+function formatFund(value) {
+  if (!state.fundAvailable) return "-";
+  return formatLarge(value);
 }
 
 function formatPrice(value) {
@@ -129,15 +136,34 @@ function selectedStockItems() {
   return block?.items || [];
 }
 
+function ensureSelectedBoard() {
+  const rows = selectedBoardItems();
+  if (!rows.length) {
+    state.selectedBoardCode = null;
+    state.selectedBoardName = "";
+    return null;
+  }
+  const current = rows.find((item) => item.board_code === state.selectedBoardCode);
+  if (current) {
+    state.selectedBoardName = current.board_name || state.selectedBoardName;
+    return current;
+  }
+  const fallback = rows[0];
+  state.selectedBoardCode = fallback.board_code;
+  state.selectedBoardName = fallback.board_name;
+  return fallback;
+}
+
 function renderBoards() {
   const rows = selectedBoardItems();
-  document.querySelector("#boardMeta").textContent = `按${metricLabels[state.liveMetric]}降序 / ${rows.length} 个板块`;
+  const sourceNote = state.liveMetric === "fund" && !state.fundAvailable ? " / 当前数据源无资金流字段" : "";
+  document.querySelector("#boardMeta").textContent = `按${metricLabels[state.liveMetric]}降序 / ${rows.length} 个板块${sourceNote}`;
   document.querySelector("#boardRows").innerHTML = rows.length
     ? rows.map(boardRow).join("")
     : `<tr><td colspan="7" class="empty">当前没有可展示的板块数据</td></tr>`;
   document.querySelectorAll("#boardRows tr[data-board-code]").forEach((row) => {
     row.addEventListener("click", () => {
-      loadBoardDetail(row.dataset.boardCode, row.dataset.boardName);
+      loadBoardDetail(row.dataset.boardCode, row.dataset.boardName).catch(renderError);
     });
   });
 }
@@ -151,7 +177,7 @@ function boardRow(item) {
       <td>${formatPercent(item.change_percent)}</td>
       <td>${formatLarge(item.volume)}</td>
       <td>${formatLarge(item.amount)}</td>
-      <td>${formatLarge(item.capital_flow)}</td>
+      <td>${formatFund(item.capital_flow)}</td>
       <td><span class="name">${escapeText(item.leader_stock_name || "-")}</span><span class="sub">${escapeText(item.leader_stock_code || "")}</span></td>
     </tr>`;
 }
@@ -160,8 +186,9 @@ function renderStocks() {
   const rows = selectedStockItems();
   const title = state.selectedBoardName ? `${state.selectedBoardName} 个股` : "板块个股";
   document.querySelector("#stockTitle").textContent = title;
+  const sourceNote = state.stockMetric === "fund" && !state.fundAvailable ? " / 当前数据源无资金流字段" : "";
   document.querySelector("#stockMeta").textContent = rows.length
-    ? `按${metricLabels[state.stockMetric]}降序 / ${rows.length} 只个股`
+    ? `按${metricLabels[state.stockMetric]}降序 / ${rows.length} 只个股${sourceNote}`
     : "当前板块没有可展示的个股数据";
   document.querySelector("#stockRows").innerHTML = rows.length
     ? rows.map(stockRow).join("")
@@ -177,7 +204,7 @@ function stockRow(item) {
       <td>${formatPercent(item.change_percent)}</td>
       <td>${formatLarge(item.volume)}</td>
       <td>${formatLarge(item.amount)}</td>
-      <td>${formatLarge(item.capital_flow)}</td>
+      <td>${formatFund(item.capital_flow)}</td>
     </tr>`;
 }
 
@@ -186,7 +213,9 @@ function renderDailyOptions() {
   select.innerHTML = state.dailyOptions.length
     ? state.dailyOptions.map((item) => `<option value="${escapeText(item.trade_date)}">${escapeText(item.trade_date)}</option>`).join("")
     : `<option value="">暂无日期</option>`;
-  if (!state.dailyDate && state.dailyOptions[0]) state.dailyDate = state.dailyOptions[0].trade_date;
+  const values = new Set(state.dailyOptions.map((item) => item.trade_date));
+  if (state.dailyOptions.length && !values.has(state.dailyDate)) state.dailyDate = state.dailyOptions[0].trade_date;
+  if (!state.dailyOptions.length) state.dailyDate = null;
   select.value = state.dailyDate || "";
 }
 
@@ -197,9 +226,12 @@ function renderWeeklyOptions() {
         .map((item) => `<option value="${escapeText(item.week_start)}|${escapeText(item.week_end)}">${escapeText(item.label)}</option>`)
         .join("")
     : `<option value="">暂无周区间</option>`;
-  if (!state.weeklyRange && state.weeklyOptions[0]) {
+  const values = new Set(state.weeklyOptions.map((item) => `${item.week_start}|${item.week_end}`));
+  const current = state.weeklyRange ? `${state.weeklyRange.weekStart}|${state.weeklyRange.weekEnd}` : "";
+  if (state.weeklyOptions.length && !values.has(current)) {
     state.weeklyRange = { weekStart: state.weeklyOptions[0].week_start, weekEnd: state.weeklyOptions[0].week_end };
   }
+  if (!state.weeklyOptions.length) state.weeklyRange = null;
   select.value = state.weeklyRange ? `${state.weeklyRange.weekStart}|${state.weeklyRange.weekEnd}` : "";
 }
 
@@ -253,6 +285,12 @@ function qualityLabel(value) {
     partial: "部分",
     missing: "缺失",
   }[value] || value || "-";
+}
+
+function updateFundAvailability(data) {
+  const blocks = [...(data.board_rankings || []), ...(data.leader_rankings || [])];
+  const fundBlocks = blocks.filter((block) => block.metric === "capital_flow");
+  state.fundAvailable = fundBlocks.some((block) => block.metric_available !== false);
 }
 
 function refreshLabel(status) {
@@ -312,14 +350,12 @@ async function refreshDashboard(options = {}) {
     if (seq !== state.requestSeq) return;
     state.boardBlocks = data.board_rankings || [];
     state.lastTradingStatus = data.trading_status;
+    state.dataSource = data.data_source || "unknown";
+    updateFundAvailability(data);
     renderIndex(data.index);
     renderStatus(data.trading_status);
     renderMeta(data);
-    const fallback = selectedBoardItems()[0];
-    if (!state.selectedBoardCode && fallback) {
-      state.selectedBoardCode = fallback.board_code;
-      state.selectedBoardName = fallback.board_name;
-    }
+    ensureSelectedBoard();
     renderBoards();
     if (state.selectedBoardCode) {
       await loadBoardDetail(state.selectedBoardCode, state.selectedBoardName, seq);
@@ -396,11 +432,9 @@ function timeframeLabel(timeframe) {
 
 document.querySelector("#liveMetricSelect").addEventListener("change", (event) => {
   state.liveMetric = event.target.value;
-  const fallback = selectedBoardItems()[0];
-  if (fallback && !selectedBoardItems().some((item) => item.board_code === state.selectedBoardCode)) {
-    state.selectedBoardCode = fallback.board_code;
-    state.selectedBoardName = fallback.board_name;
-    loadBoardDetail(fallback.board_code, fallback.board_name);
+  const selected = ensureSelectedBoard();
+  if (selected) {
+    loadBoardDetail(selected.board_code, selected.board_name).catch(renderError);
   } else {
     renderBoards();
   }

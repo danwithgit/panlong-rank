@@ -39,10 +39,12 @@ def snapshot_for_timeframe_with_settings(db: Session, status, settings, timefram
     end = combine_trade_time(status.last_trade_date if not status.is_trade_day else status.trade_date, spec.end)
     if start is None and end is None:
         snapshot = snapshot_for_period(db, status, start, end)
+        if not _is_allowed_snapshot(snapshot, settings):
+            return None
         if settings is not None and _is_realtime_like(timeframe) and _is_unusable_realtime(snapshot, status, settings):
             return None
         return snapshot
-    return snapshot_for_period(
+    snapshot = snapshot_for_period(
         db,
         status,
         start,
@@ -50,11 +52,14 @@ def snapshot_for_timeframe_with_settings(db: Session, status, settings, timefram
         boundary_tolerance_seconds=getattr(settings, "period_boundary_tolerance_seconds", None),
         max_gap_seconds=getattr(settings, "max_period_snapshot_gap_seconds", None),
     )
+    if not _is_allowed_snapshot(snapshot, settings):
+        return None
+    return snapshot
 
 
 def ensure_snapshot(db: Session, settings, status) -> MarketSnapshot:
     snapshot = latest_snapshot(db, status)
-    if snapshot is not None:
+    if _is_allowed_snapshot(snapshot, settings):
         return snapshot
     raise RuntimeError("行情数据缺失，采集服务繁忙或上游数据源不可用")
 
@@ -141,16 +146,22 @@ def build_single_rank(
     title = f"{timeframe_label(timeframe)}{TARGET_TYPE_LABELS[target_type]}{RANK_TYPE_LABELS[rank_type]}排行榜"
 
     if target_type == "sector":
+        if rank_type == "fund" and not _has_fund_metric(snapshot.boards):
+            return _unavailable_block(target_type, rank_type, title, metric)
         items = _rank_boards(snapshot.boards, rank_type, limit)
     elif target_type == "stock":
         stocks = snapshot.stocks
         if sector_code:
             stocks = [item for item in stocks if item.board_code == sector_code]
+        if rank_type == "fund" and not _has_fund_metric(stocks):
+            return _unavailable_block(target_type, rank_type, title, metric)
         leaders = {board.leader_stock_code for board in snapshot.boards if board.leader_stock_code}
         items = _rank_stocks(stocks, rank_type, limit, leaders)
     else:
         leaders_by_board = {board.code: board.leader_stock_code for board in snapshot.boards if board.leader_stock_code}
         leader_stocks = [stock for stock in snapshot.stocks if leaders_by_board.get(stock.board_code) == stock.code]
+        if rank_type == "fund" and not _has_fund_metric(leader_stocks):
+            return _unavailable_block(target_type, rank_type, title, metric)
         items = _rank_stocks(leader_stocks, rank_type, limit, set(leaders_by_board.values()))
 
     return RankingBlock(
@@ -159,6 +170,21 @@ def build_single_rank(
         metric=metric,
         items=items,
     )
+
+
+def _unavailable_block(target_type: str, rank_type: str, title: str, metric: str) -> RankingBlock:
+    return RankingBlock(
+        key=f"{target_type}_{rank_type}",
+        title=title,
+        metric=metric,
+        metric_available=False,
+        quality_note="当前数据源没有真实资金流字段",
+        items=[],
+    )
+
+
+def _has_fund_metric(items) -> bool:
+    return any(abs(float(getattr(item, "capital_flow", 0) or 0)) > 0 for item in items)
 
 
 def save_ranking_blocks(db: Session, status, timeframe: Timeframe, blocks: list[RankingBlock]) -> None:
@@ -297,6 +323,21 @@ def _parse_block_key(key: str) -> tuple[str, str]:
 
 def _is_realtime_like(timeframe: Timeframe) -> bool:
     return timeframe in {Timeframe.realtime, Timeframe.daily, Timeframe.last_trade_day}
+
+
+def _is_allowed_snapshot(snapshot: Optional[MarketSnapshot], settings) -> bool:
+    if snapshot is None:
+        return False
+    if settings is None:
+        return True
+    provider = getattr(settings, "data_provider", "auto").lower()
+    if provider == "sample":
+        return True
+    return not _is_sample_source(snapshot.data_source)
+
+
+def _is_sample_source(data_source: str) -> bool:
+    return data_source.startswith("sample") or "sample" in data_source
 
 
 def _is_unusable_realtime(snapshot: Optional[MarketSnapshot], status, settings) -> bool:

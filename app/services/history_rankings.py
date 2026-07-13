@@ -90,7 +90,9 @@ def compare_daily(
         return {"target_type": target_type, "target_code": target_code, "items": [], "data_quality": "missing"}
     selected = trade_date or dates[0]
     ordered = sorted(dates, reverse=True)
-    start_index = ordered.index(selected) if selected in ordered else 0
+    if selected not in ordered:
+        selected = ordered[0]
+    start_index = ordered.index(selected)
     compare_dates = ordered[start_index : start_index + days]
     rows = [_find_daily(db, target_type, target_code, item, sector_code=sector_code) for item in compare_dates]
     rows = [row for row in rows if row is not None]
@@ -159,6 +161,9 @@ def _row_item(row, rank: int) -> dict:
         "volume": row.volume,
         "turnover": row.turnover,
         "fund_amount": row.fund_amount,
+        "trading_days": getattr(row, "trading_days", None),
+        "expected_trading_days": getattr(row, "expected_trading_days", None),
+        "missing_trading_days": getattr(row, "missing_trading_days", None),
         "data_quality": row.data_quality,
         "data_source": row.data_source,
     }

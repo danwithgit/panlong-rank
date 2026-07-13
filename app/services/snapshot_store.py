@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.tables import (
@@ -15,6 +15,8 @@ from app.db.tables import (
     TradingCalendar,
 )
 from app.models import BoardQuote, IndexQuote, MarketSnapshot, StockQuote, TradingStatus
+
+StockRow = tuple[StockSnapshot, Optional[str], Optional[str]]
 
 
 def save_trading_calendar(db: Session, status: TradingStatus) -> None:
@@ -75,16 +77,19 @@ def save_snapshot(db: Session, snapshot: MarketSnapshot, data_source: str) -> in
         )
         rows += 1
 
-    saved_stock_codes = set()
+    _upsert_stock_sectors(db, snapshot.stocks)
+    saved_stock_keys = set()
     for stock in snapshot.stocks:
-        _upsert_stock_sector(db, stock)
-        if stock.code in saved_stock_codes:
+        key = (stock.code, stock.board_code or "")
+        if key in saved_stock_keys:
             continue
-        saved_stock_codes.add(stock.code)
+        saved_stock_keys.add(key)
         db.add(
             StockSnapshot(
                 stock_code=stock.code,
                 stock_name=stock.name,
+                sector_code=stock.board_code or None,
+                sector_name=stock.board_name or None,
                 current_price=stock.price,
                 change_percent=stock.change_percent,
                 change_value=0,
@@ -207,25 +212,35 @@ def diff_snapshots(start: MarketSnapshot, end: MarketSnapshot) -> MarketSnapshot
     return end.model_copy(update={"boards": boards, "stocks": stocks})
 
 
-def _upsert_stock_sector(db: Session, stock: StockQuote) -> None:
-    existing = db.scalar(
-        select(StockSectorMap).where(
-            and_(StockSectorMap.stock_code == stock.code, StockSectorMap.sector_code == stock.board_code)
-        )
-    )
-    if existing is None:
-        db.add(
-            StockSectorMap(
-                stock_code=stock.code,
-                stock_name=stock.name,
-                sector_code=stock.board_code,
-                sector_name=stock.board_name,
-                sector_type="industry",
+def _upsert_stock_sectors(db: Session, stocks: list[StockQuote]) -> None:
+    desired = {
+        (stock.code, stock.board_code): stock
+        for stock in stocks
+        if stock.board_code and stock.board_name
+    }
+    if not desired:
+        return
+    existing: dict[tuple[str, str], StockSectorMap] = {}
+    codes = sorted({code for code, _ in desired})
+    for start in range(0, len(codes), 500):
+        rows = db.scalars(select(StockSectorMap).where(StockSectorMap.stock_code.in_(codes[start : start + 500])))
+        for row in rows:
+            existing[(row.stock_code, row.sector_code)] = row
+    for key, stock in desired.items():
+        row = existing.get(key)
+        if row is None:
+            db.add(
+                StockSectorMap(
+                    stock_code=stock.code,
+                    stock_name=stock.name,
+                    sector_code=stock.board_code,
+                    sector_name=stock.board_name,
+                    sector_type="industry",
+                )
             )
-        )
-    else:
-        existing.stock_name = stock.name
-        existing.sector_name = stock.board_name
+            continue
+        row.stock_name = stock.name
+        row.sector_name = stock.board_name
 
 
 def _leader_map(db: Session, snapshot: MarketSnapshot) -> dict[str, tuple[str, str]]:
@@ -310,18 +325,28 @@ def _sector_rows_at(db: Session, trade_date: str, snapshot_time: datetime) -> li
     )
 
 
-def _latest_stock_rows(db: Session, trade_date: str, snapshot_time: Optional[datetime] = None) -> list[tuple[StockSnapshot, StockSectorMap]]:
+def _latest_stock_rows(db: Session, trade_date: str, snapshot_time: Optional[datetime] = None) -> list[StockRow]:
     if snapshot_time is None:
         snapshot_time = db.scalar(select(func.max(StockSnapshot.snapshot_time)).where(StockSnapshot.trade_date == trade_date))
     if snapshot_time is None:
         return []
+    stock_rows = list(
+        db.scalars(
+            select(StockSnapshot)
+            .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
+            .order_by(StockSnapshot.stock_code, StockSnapshot.sector_code)
+        )
+    )
+    if any(row.sector_code for row in stock_rows):
+        return [(row, row.sector_code, row.sector_name) for row in stock_rows if row.sector_code]
+
     rows = db.execute(
         select(StockSnapshot, StockSectorMap)
         .where(StockSnapshot.trade_date == trade_date, StockSnapshot.snapshot_time == snapshot_time)
         .join(StockSectorMap, StockSnapshot.stock_code == StockSectorMap.stock_code)
-        .order_by(StockSnapshot.stock_code)
+        .order_by(StockSnapshot.stock_code, StockSectorMap.sector_code)
     ).all()
-    return list(rows)
+    return [(stock, mapping.sector_code, mapping.sector_name) for stock, mapping in rows]
 
 
 def _snapshot_at_or_before(
@@ -404,7 +429,7 @@ def _has_continuous_index_snapshots(
 def _snapshot_from_rows(
     index_row: IndexSnapshot,
     sector_rows: list[SectorSnapshot],
-    stock_rows: list[tuple[StockSnapshot, StockSectorMap]],
+    stock_rows: list[StockRow],
     status: TradingStatus,
 ) -> MarketSnapshot:
     index = IndexQuote(
@@ -437,8 +462,8 @@ def _snapshot_from_rows(
         StockQuote(
             code=stock.stock_code,
             name=stock.stock_name,
-            board_code=mapping.sector_code,
-            board_name=mapping.sector_name,
+            board_code=sector_code or "",
+            board_name=sector_name or "",
             price=stock.current_price,
             change_percent=stock.change_percent,
             volume=stock.volume,
@@ -446,7 +471,7 @@ def _snapshot_from_rows(
             capital_flow=stock.fund_amount,
             updated_at=stock.snapshot_time,
         )
-        for stock, mapping in stock_rows
+        for stock, sector_code, sector_name in stock_rows
     ]
     return MarketSnapshot(index=index, boards=boards, stocks=stocks, trading_status=status, data_source=index_row.data_source)
 
