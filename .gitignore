@@ -6,6 +6,7 @@ __pycache__/
 venv/
 .env
 *.sqlite3
+*.sqlite3-*
 dist/
 build/
 node_modules/

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.tables import DailyAggregate, WeeklyAggregate
@@ -26,6 +27,81 @@ def recent_weekly_options(db: Session, limit: int = 4) -> list[dict]:
         {"week_start": start, "week_end": end, "label": f"{start} ~ {end}"}
         for start, end in weekly_ranges(db, limit)
     ]
+
+
+def summary_report(db: Session, target_type: str = "sector") -> dict:
+    dates = recent_trade_dates(db, 7)
+    if not dates:
+        return {
+            "trade_date": None,
+            "target_type": target_type,
+            "date_start": None,
+            "date_end": None,
+            "days": 0,
+            "metric_note": _volume_metric_note(),
+            "items": [],
+            "data_quality": "missing",
+        }
+
+    latest_date = dates[0]
+    daily_volume = daily_rank(db, latest_date, target_type, "volume", 1)
+    daily_turnover = daily_rank(db, latest_date, target_type, "turnover", 1)
+    cumulative_rows = _cumulative_rows(db, dates, target_type)
+    seven_day_volume = _top_cumulative(cumulative_rows, "volume")
+    seven_day_turnover = _top_cumulative(cumulative_rows, "turnover")
+    quality_rows = [
+        item
+        for item in [
+            *(daily_volume.get("items") or []),
+            *(daily_turnover.get("items") or []),
+            seven_day_volume,
+            seven_day_turnover,
+        ]
+        if item
+    ]
+    return {
+        "trade_date": latest_date,
+        "target_type": target_type,
+        "date_start": min(dates),
+        "date_end": max(dates),
+        "days": len(dates),
+        "metric_note": _volume_metric_note(),
+        "items": [
+            {
+                "key": "today_volume",
+                "title": "今日最大买入量",
+                "metric": "volume",
+                "metric_label": "成交量",
+                "period_label": latest_date,
+                "item": _first_item(daily_volume),
+            },
+            {
+                "key": "today_turnover",
+                "title": "今日最大成交额",
+                "metric": "turnover",
+                "metric_label": "成交额",
+                "period_label": latest_date,
+                "item": _first_item(daily_turnover),
+            },
+            {
+                "key": "seven_day_volume",
+                "title": "7日累计最大买入量",
+                "metric": "volume",
+                "metric_label": "累计成交量",
+                "period_label": f"{min(dates)} ~ {max(dates)}",
+                "item": seven_day_volume,
+            },
+            {
+                "key": "seven_day_turnover",
+                "title": "7日累计最大成交额",
+                "metric": "turnover",
+                "metric_label": "累计成交额",
+                "period_label": f"{min(dates)} ~ {max(dates)}",
+                "item": seven_day_turnover,
+            },
+        ],
+        "data_quality": _dict_quality(quality_rows),
+    }
 
 
 def daily_rank(
@@ -75,6 +151,105 @@ def weekly_rank(
         "items": _rank_rows(rows, metric, limit),
         "data_quality": _quality(rows),
     }
+
+
+def _volume_metric_note() -> str:
+    return "当前免费行情源没有逐笔主动买入字段，买入量按成交量口径展示。"
+
+
+def _first_item(payload: dict) -> Optional[dict]:
+    items = payload.get("items") or []
+    return items[0] if items else None
+
+
+def _cumulative_rows(db: Session, dates: list[str], target_type: str) -> list[dict]:
+    rows = list(
+        db.scalars(
+            select(DailyAggregate)
+            .where(DailyAggregate.trade_date.in_(dates), DailyAggregate.target_type == target_type)
+            .order_by(DailyAggregate.trade_date.asc(), DailyAggregate.id.asc())
+        )
+    )
+    grouped: dict[tuple[str, Optional[str]], dict] = {}
+    for row in rows:
+        key = (row.target_code, row.sector_code)
+        item = grouped.setdefault(
+            key,
+            {
+                "rank": 0,
+                "target_type": row.target_type,
+                "target_code": row.target_code,
+                "target_name": row.target_name,
+                "sector_code": row.sector_code,
+                "sector_name": row.sector_name,
+                "current_price": row.close_price,
+                "change_percent": row.change_percent,
+                "volume": 0,
+                "turnover": 0,
+                "fund_amount": 0,
+                "trading_days": 0,
+                "expected_trading_days": len(dates),
+                "missing_trading_days": 0,
+                "data_quality": row.data_quality,
+                "data_source": row.data_source,
+                "_trade_dates": set(),
+                "_qualities": set(),
+                "_sources": set(),
+            },
+        )
+        item["target_name"] = row.target_name
+        item["sector_name"] = row.sector_name
+        item["current_price"] = row.close_price
+        item["change_percent"] = row.change_percent
+        item["volume"] += row.volume
+        item["turnover"] += row.turnover
+        item["fund_amount"] += row.fund_amount
+        item["_trade_dates"].add(row.trade_date)
+        item["_qualities"].add(row.data_quality)
+        item["_sources"].add(row.data_source)
+
+    values = []
+    for item in grouped.values():
+        trading_days = len(item["_trade_dates"])
+        item["trading_days"] = trading_days
+        item["missing_trading_days"] = max(len(dates) - trading_days, 0)
+        item["data_quality"] = _merge_dict_quality(item["_qualities"], item["missing_trading_days"])
+        item["data_source"] = "+".join(sorted(item["_sources"]))
+        del item["_trade_dates"]
+        del item["_qualities"]
+        del item["_sources"]
+        values.append(item)
+    return values
+
+
+def _top_cumulative(rows: list[dict], metric: str) -> Optional[dict]:
+    ranked = sorted(rows, key=lambda item: item.get(metric) or 0, reverse=True)
+    if not ranked:
+        return None
+    item = dict(ranked[0])
+    item["rank"] = 1
+    return item
+
+
+def _dict_quality(rows: list[dict]) -> str:
+    if not rows:
+        return "missing"
+    qualities = {row.get("data_quality") for row in rows if row.get("data_quality")}
+    if len(qualities) == 1:
+        return next(iter(qualities))
+    return "partial"
+
+
+def _merge_dict_quality(qualities: set[str], missing_days: int) -> str:
+    if not qualities:
+        return "missing"
+    if "missing" in qualities:
+        return "missing"
+    if missing_days > 0 or "partial" in qualities or len(qualities) > 1:
+        return "partial"
+    if "backfilled" in qualities:
+        return "backfilled"
+    return "live"
 
 
 def compare_daily(

@@ -241,6 +241,41 @@ function renderHistoryRows(selector, items) {
     : `<tr><td colspan="5" class="empty">暂无历史聚合数据</td></tr>`;
 }
 
+function renderSummaryReport(data) {
+  const items = data.items || [];
+  const meta = data.days
+    ? `${data.date_start || "-"} ~ ${data.date_end || "-"} / ${qualityLabel(data.data_quality)} / ${data.metric_note || ""}`
+    : data.metric_note || "暂无报表数据";
+  document.querySelector("#summaryReportMeta").textContent = meta;
+  document.querySelector("#summaryReportRows").innerHTML = items.length
+    ? items.map(summaryReportCard).join("")
+    : `<div class="report-empty">暂无交易强度报表</div>`;
+}
+
+function summaryReportCard(card) {
+  const item = card.item || {};
+  const metricValue = item[card.metric] ?? item.amount;
+  const missingDays = Number(item.missing_trading_days || 0);
+  const quality = item.data_quality || "missing";
+  const qualityText = missingDays > 0 ? `${qualityLabel(quality)} / 缺 ${missingDays} 天` : qualityLabel(quality);
+  return `
+    <article class="report-card">
+      <div class="report-title">
+        <span>${escapeText(card.title)}</span>
+        <small>${escapeText(card.period_label || "-")}</small>
+      </div>
+      <strong class="report-value">${formatLarge(metricValue)}</strong>
+      <div class="report-target">
+        <span class="name">${escapeText(item.target_name || "-")}</span>
+        <span class="sub">${escapeText(item.target_code || "")}</span>
+      </div>
+      <div class="report-foot">
+        <span>${escapeText(card.metric_label || metricLabels[card.metric] || card.metric)}</span>
+        <span class="quality ${escapeText(quality)}">${escapeText(qualityText)}</span>
+      </div>
+    </article>`;
+}
+
 function historyRow(item) {
   return `
     <tr>
@@ -321,6 +356,7 @@ function renderLoadingState(label = "加载中") {
   document.querySelector("#dataMeta").textContent = label;
   document.querySelector("#boardRows").innerHTML = `<tr><td colspan="7" class="empty">${label}</td></tr>`;
   document.querySelector("#stockRows").innerHTML = `<tr><td colspan="7" class="empty">${label}</td></tr>`;
+  document.querySelector("#summaryReportRows").innerHTML = `<div class="report-empty">${label}</div>`;
 }
 
 function renderError(error) {
@@ -328,6 +364,7 @@ function renderError(error) {
   document.querySelector("#dataMeta").textContent = `数据不可用：${error.message}`;
   document.querySelector("#boardRows").innerHTML = `<tr><td colspan="7" class="empty">数据缺失或上游服务繁忙</td></tr>`;
   document.querySelector("#stockRows").innerHTML = `<tr><td colspan="7" class="empty">数据缺失或上游服务繁忙</td></tr>`;
+  document.querySelector("#summaryReportRows").innerHTML = `<div class="report-empty">报表数据暂不可用</div>`;
 }
 
 async function fetchJson(url) {
@@ -385,11 +422,13 @@ async function loadBoardDetail(boardCode, boardName = "", seq = state.requestSeq
 }
 
 async function refreshHistory(seq = state.requestSeq) {
-  const [days, weeks] = await Promise.all([
+  const [summary, days, weeks] = await Promise.all([
+    fetchJson("/api/report/summary?target_type=sector"),
     fetchJson("/api/history/days?limit=7"),
     fetchJson("/api/history/weeks?limit=4"),
   ]);
   if (seq !== state.requestSeq) return;
+  renderSummaryReport(summary);
   state.dailyOptions = days.items || [];
   state.weeklyOptions = weeks.items || [];
   renderDailyOptions();

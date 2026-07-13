@@ -6,7 +6,14 @@ from sqlalchemy.orm import sessionmaker
 from app.db.session import Base
 from app.db.tables import DailyAggregate, IndexSnapshot, SectorSnapshot, StockSectorMap, StockSnapshot, TradingCalendar, WeeklyAggregate
 from app.services.aggregates import rebuild_daily_aggregate, rebuild_recent_weekly_aggregates
-from app.services.history_rankings import compare_daily, daily_rank, recent_daily_options, recent_weekly_options, weekly_rank
+from app.services.history_rankings import (
+    compare_daily,
+    daily_rank,
+    recent_daily_options,
+    recent_weekly_options,
+    summary_report,
+    weekly_rank,
+)
 
 
 def _db():
@@ -171,6 +178,93 @@ def test_history_rank_change_metric_orders_by_change_percent_desc():
     assert [item["change_percent"] for item in daily["items"]] == [4.8, 1.5, -3.2]
     assert [item["target_code"] for item in weekly["items"]] == ["week_up", "week_mid", "week_down"]
     assert [item["change_percent"] for item in weekly["items"]] == [8.6, 3.4, -2.1]
+
+
+def test_summary_report_uses_today_and_seven_day_cumulative_metrics():
+    db = _db()
+    now = datetime(2026, 7, 13, 15, 0, 0)
+    for index, trade_date in enumerate(
+        [
+            "2026-07-03",
+            "2026-07-06",
+            "2026-07-07",
+            "2026-07-08",
+            "2026-07-09",
+            "2026-07-10",
+            "2026-07-13",
+        ]
+    ):
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code="steady",
+                target_name="累计量板块",
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=0.5,
+                volume=1000,
+                turnover=100,
+                fund_amount=0,
+                snapshot_time=now + timedelta(days=index),
+                data_source="test",
+                data_quality="live",
+            )
+        )
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code="today_hot",
+                target_name="今日放量板块",
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=3,
+                volume=5000 if trade_date == "2026-07-13" else 10,
+                turnover=9000 if trade_date == "2026-07-13" else 10,
+                fund_amount=0,
+                snapshot_time=now + timedelta(days=index),
+                data_source="test",
+                data_quality="live",
+            )
+        )
+        db.add(
+            DailyAggregate(
+                trade_date=trade_date,
+                target_type="sector",
+                target_code="turnover_week",
+                target_name="累计额板块",
+                open_price=0,
+                close_price=0,
+                high_price=0,
+                low_price=0,
+                change_percent=1,
+                volume=100,
+                turnover=2000,
+                fund_amount=0,
+                snapshot_time=now + timedelta(days=index),
+                data_source="test",
+                data_quality="live",
+            )
+        )
+    db.commit()
+
+    report = summary_report(db, "sector")
+    items = {item["key"]: item for item in report["items"]}
+
+    assert report["trade_date"] == "2026-07-13"
+    assert report["days"] == 7
+    assert "按成交量口径" in report["metric_note"]
+    assert items["today_volume"]["item"]["target_code"] == "today_hot"
+    assert items["today_turnover"]["item"]["target_code"] == "today_hot"
+    assert items["seven_day_volume"]["item"]["target_code"] == "steady"
+    assert items["seven_day_volume"]["item"]["volume"] == 7000
+    assert items["seven_day_turnover"]["item"]["target_code"] == "turnover_week"
+    assert items["seven_day_turnover"]["item"]["turnover"] == 14000
 
 
 def test_history_api_defaults_to_change_metric():

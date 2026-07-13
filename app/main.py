@@ -25,6 +25,7 @@ from app.services.history_rankings import (
     daily_rank,
     recent_daily_options,
     recent_weekly_options,
+    summary_report,
     weekly_rank,
 )
 from app.services.periods import period_for, period_options
@@ -161,6 +162,14 @@ def history_days(limit: int = Query(default=7, ge=1, le=30), db: Session = Depen
 @app.get("/api/history/weeks")
 def history_weeks(limit: int = Query(default=4, ge=1, le=12), db: Session = Depends(get_db)):
     return {"items": recent_weekly_options(db, limit)}
+
+
+@app.get("/api/report/summary")
+def report_summary(
+    target_type: str = Query(default="sector", pattern="^(sector|stock|index)$"),
+    db: Session = Depends(get_db),
+):
+    return summary_report(db, target_type)
 
 
 @app.get("/api/history/daily-rank")

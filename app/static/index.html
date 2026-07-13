@@ -18,6 +18,16 @@
     <main>
       <section class="index-panel" id="indexPanel"></section>
 
+      <section class="report-panel" aria-labelledby="summaryReportTitle">
+        <div class="section-head report-head">
+          <div>
+            <h2 id="summaryReportTitle">交易强度报表</h2>
+            <span class="meta" id="summaryReportMeta">按板块统计</span>
+          </div>
+        </div>
+        <div class="report-grid" id="summaryReportRows"></div>
+      </section>
+
       <section class="toolbar">
         <nav class="tabs" id="timeframeTabs" aria-label="时间维度"></nav>
         <div class="meta" id="dataMeta">等待数据</div>
@@ -165,6 +175,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260709-2"></script>
+    <script src="/static/app.js?v=20260713-1"></script>
   </body>
 </html>

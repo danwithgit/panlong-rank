@@ -98,6 +98,88 @@ main {
   margin-bottom: 14px;
 }
 
+.report-panel {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.report-head {
+  min-height: 54px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.report-card {
+  min-width: 0;
+  min-height: 156px;
+  padding: 16px;
+  background: var(--panel);
+}
+
+.report-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.report-title span {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.report-title small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.report-value {
+  display: block;
+  margin: 10px 0 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #0f2638;
+  font-size: 26px;
+  line-height: 1.15;
+}
+
+.report-target {
+  min-height: 38px;
+}
+
+.report-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-empty {
+  grid-column: 1 / -1;
+  min-height: 104px;
+  padding: 38px 16px;
+  background: var(--panel);
+  color: var(--muted);
+  text-align: center;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -309,6 +391,10 @@ tbody tr:hover,
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .live-grid,
   .history-grid {
     grid-template-columns: 1fr;
@@ -334,6 +420,14 @@ tbody tr:hover,
 
   .index-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-title {
+    min-height: 0;
   }
 
   .toolbar,
