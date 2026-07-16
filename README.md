@@ -48,6 +48,18 @@ docker compose up --build
 
 默认 compose 会启动 PostgreSQL、Redis 和应用。`DATA_PROVIDER` 默认设为 `auto`，使用 AKShare 采集真实数据；采集失败时不写入样例数据，API 返回 503。
 
+生产服务器使用独立配置，数据库和 Redis 不暴露宿主机端口，应用通过外部 `proxy-net` 网络接入 Nginx：
+
+```bash
+cp .env.production.example .env
+# 将 .env 中的两个占位值替换为独立的强随机值
+docker network create proxy-net 2>/dev/null || true
+docker compose -f docker-compose.prod.yml up --build -d
+docker compose -f docker-compose.prod.yml ps
+```
+
+生产 Nginx 的上游地址应为 `http://panlong-rank-app:8000`，并加入同一个 `proxy-net` 网络。应用启动时会先执行 Alembic 迁移；PostgreSQL 与 Redis 数据分别保存在 Docker 命名卷中。
+
 数据库迁移可选执行：
 
 ```bash

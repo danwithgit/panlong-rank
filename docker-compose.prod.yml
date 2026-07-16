@@ -1,0 +1,82 @@
+name: panlong-rank
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: panlong_rank
+      POSTGRES_USER: panlong
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U panlong -d panlong_rank"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  app:
+    container_name: panlong-rank-app
+    build: .
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - python -m alembic upgrade head && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://panlong:${POSTGRES_PASSWORD}@postgres:5432/panlong_rank
+      REDIS_URL: redis://redis:6379/0
+      DATA_PROVIDER: auto
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required}
+      SCHEDULER_ENABLED: "true"
+      COLLECT_ON_STARTUP: "true"
+      COLLECT_INTERVAL_SECONDS: "180"
+      MIN_COLLECT_INTERVAL_SECONDS: "120"
+      BACKFILL_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - backend
+      - proxy
+
+networks:
+  backend:
+  proxy:
+    external: true
+    name: proxy-net
+
+volumes:
+  postgres_data:
+  redis_data:
